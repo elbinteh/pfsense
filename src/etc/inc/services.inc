@@ -286,10 +286,13 @@ function services_radvd_configure($blacklist = array()) {
 				$searchlist[] = $sd;
 			}
 		}
+		$searchliststring = "";
 		if (count($searchlist) > 0) {
 			$searchliststring = trim(implode(" ", $searchlist));
 		}
-		if (!empty($dhcpv6ifconf['domain'])) {
+		if (!empty($searchliststring)) {
+			$radvdconf .= "\tDNSSL {$searchliststring} { };\n";
+		} elseif (!empty($dhcpv6ifconf['domain'])) {
 			$radvdconf .= "\tDNSSL {$dhcpv6ifconf['domain']} {$searchliststring} { };\n";
 		} elseif (!empty($config['system']['domain'])) {
 			$radvdconf .= "\tDNSSL {$config['system']['domain']} {$searchliststring} { };\n";
@@ -385,9 +388,9 @@ function services_radvd_configure($blacklist = array()) {
 				$radvdconf .= "\tRDNSS {$dnsstring} { };\n";
 			}
 		}
-		if (!empty($config['system']['domain'])) {
+		/* if (!empty($config['system']['domain'])) {
 			$radvdconf .= "\tDNSSL {$config['system']['domain']} { };\n";
-		}
+		} */
 		$radvdconf .= "};\n";
 	}
 
