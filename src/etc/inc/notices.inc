@@ -6,7 +6,7 @@
  * Copyright (c) 2005 Colin Smith (ethethlay@gmail.com)
  * Copyright (c) 2005-2013 BSD Perimeter
  * Copyright (c) 2013-2016 Electric Sheep Fencing
- * Copyright (c) 2014-2019 Rubicon Communications, LLC (Netgate)
+ * Copyright (c) 2014-2020 Rubicon Communications, LLC (Netgate)
  * All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -27,6 +27,7 @@ require_once("functions.inc");
 require_once("led.inc");
 
 $notice_path = $g['tmp_path'] . '/notices';
+global $smtp_authentication_mechanisms;
 $smtp_authentication_mechanisms = array(
 	'PLAIN' => 'PLAIN',
 	'LOGIN' => 'LOGIN');
@@ -375,7 +376,11 @@ function send_smtp_message($message, $subject = "(no subject)", $force = false) 
 	);
 
 	if ($config['notifications']['smtp']['sslvalidate'] == "disabled") {
-		$params['socket_options'] = array('ssl' => array('verify_peer_name' => false));
+		$params['socket_options'] = array(
+			'ssl' => array(
+				'verify_peer_name' => false,
+				'verify_peer' => false
+		));
 	}
 
 	if ($config['notifications']['smtp']['fromaddress']) {

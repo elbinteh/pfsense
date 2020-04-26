@@ -5,7 +5,7 @@
  * part of pfSense (https://www.pfsense.org)
  * Copyright (c) 2004-2013 BSD Perimeter
  * Copyright (c) 2013-2016 Electric Sheep Fencing
- * Copyright (c) 2014-2019 Rubicon Communications, LLC (Netgate)
+ * Copyright (c) 2014-2020 Rubicon Communications, LLC (Netgate)
  * All rights reserved.
  *
  * originally based on m0n0wall (http://m0n0.ch/wall)
@@ -467,7 +467,7 @@ $group->add(new Form_IpAddress(
 	'src',
 	null,
 	is_specialnet($pconfig['src']) ? '': $pconfig['src']
-))->addMask('srcmask', $pconfig['srcmask'], 31)->setHelp('Address/mask');
+))->addMask('srcmask', $pconfig['srcmask'], 31, 1, false)->setHelp('Address/mask');
 
 $group->setHelp('Enter the internal (LAN) subnet for the 1:1 mapping. ' .
 				'The subnet size specified for the internal subnet will be applied to the external subnet.');
@@ -495,7 +495,7 @@ $group->add(new Form_IpAddress(
 	null,
 	is_specialnet($pconfig['dst']) ? '': $pconfig['dst'],
 	'ALIASV4V6'
-))->addMask('dstmask', $pconfig['dstmask'], 31)->setHelp('Address/mask');
+))->addMask('dstmask', $pconfig['dstmask'], 31, 1, false)->setHelp('Address/mask');
 
 $group->setHelp('The 1:1 mapping will only be used for connections to or from the specified destination. Hint: this is usually "Any".');
 

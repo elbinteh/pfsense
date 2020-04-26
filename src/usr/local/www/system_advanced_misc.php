@@ -5,7 +5,7 @@
  * part of pfSense (https://www.pfsense.org)
  * Copyright (c) 2004-2013 BSD Perimeter
  * Copyright (c) 2013-2016 Electric Sheep Fencing
- * Copyright (c) 2014-2019 Rubicon Communications, LLC (Netgate)
+ * Copyright (c) 2014-2020 Rubicon Communications, LLC (Netgate)
  * Copyright (c) 2008 Shrew Soft Inc
  * All rights reserved.
  *
@@ -52,6 +52,8 @@ $mds_modes = array(
 	2 => gettext('Software sequence mitigation enabled (not recommended)'),
 	3 => gettext('Automatic VERW or Software selection'),
 );
+
+$available_kernel_memory = get_single_sysctl("vm.kmem_map_free");
 
 $pconfig['proxyurl'] = $config['system']['proxyurl'];
 $pconfig['proxyport'] = $config['system']['proxyport'];
@@ -122,6 +124,11 @@ if ($_POST) {
 
 	if (!empty($_POST['use_mfs_var_size']) && (!is_numeric($_POST['use_mfs_var_size']) || ($_POST['use_mfs_var_size'] < 60))) {
 		$input_errors[] = gettext("/var Size must be numeric and should not be less than 60MiB.");
+	}
+
+	if (is_numericint($_POST['use_mfs_tmp_size']) && is_numericint($_POST['use_mfs_var_size']) &&
+	    ((($_POST['use_mfs_tmp_size'] + $_POST['use_mfs_var_size']) * 1024 * 1024) > $available_kernel_memory)) {
+		$input_errors[] = gettext("Combined size of /tmp and /var RAM disks would exceed free kernel memory.");
 	}
 
 	if (!empty($_POST['proxyport']) && !is_port($_POST['proxyport'])) {
@@ -398,13 +405,12 @@ $group->add(new Form_Checkbox(
 	'Use sticky connections',
 	'Use sticky connections',
 	$pconfig['lb_use_sticky']
-))->setHelp('Successive connections will be redirected to the servers in a '.
-	'round-robin manner with connections from the same source being sent to the '.
-	'same web server. This "sticky connection" will exist as long as there are '.
+))->setHelp('Successive connections will be redirected via gateways in a '.
+	'round-robin manner with connections from the same source being sent via the '.
+	'same gateway. This "sticky connection" will exist as long as there are '.
 	'states that refer to this connection. Once the states expire, so will the '.
 	'sticky connection. Further connections from that host will be redirected '.
-	'to the next web server in the round robin. Changing this option will '.
-	'restart the Load Balancing service.');
+	'via the next gateway in the round robin.');
 
 $group->add(new Form_Input(
 	'srctrack',
@@ -583,7 +589,10 @@ $group->add(new Form_Input(
 	['placeholder' => 60]
 ))->setHelp('/var RAM Disk<br />Do not set lower than 60.');
 
-$group->setHelp('Sets the size, in MiB, for the RAM disks.');
+$group->setHelp('Sets the size, in MiB, for the RAM disks. ' .
+	'Ensure each RAM disk is large enough to contain the current contents of the directories in question. %s' .
+	'Maximum total size of all RAM disks cannot exceed free kernel memory: %s',
+	'<br/>', format_bytes( $available_kernel_memory ));
 
 $section->add($group);
 
@@ -650,7 +659,8 @@ $form->add($section);
 print $form;
 
 $ramdisk_msg = gettext('The \"Use Ramdisk\" setting has been changed. This requires the firewall\nto reboot.\n\nReboot now ?');
-$use_mfs_tmpvar_changed = (($use_mfs_tmpvar_before !== $use_mfs_tmpvar_after) && !$input_errors);
+$use_mfs_tmpvar_changed = ((($use_mfs_tmpvar_before !== $use_mfs_tmpvar_after) ||
+			    (!empty($_POST) && $use_mfs_tmpvar_after && file_exists('/conf/ram_disks_failed'))) && !$input_errors);
 ?>
 
 <script type="text/javascript">

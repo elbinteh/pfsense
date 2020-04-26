@@ -5,7 +5,7 @@
  * part of pfSense (https://www.pfsense.org)
  * Copyright (c) 2005-2013 BSD Perimeter
  * Copyright (c) 2013-2016 Electric Sheep Fencing
- * Copyright (c) 2014-2019 Rubicon Communications, LLC (Netgate)
+ * Copyright (c) 2014-2020 Rubicon Communications, LLC (Netgate)
  * Copyright (c) 2005-2006 Colin Smith (ethethlay@gmail.com)
  * All rights reserved.
  *
@@ -265,9 +265,16 @@ function get_services() {
 	}
 
 	$pconfig = array();
-	$pconfig['name'] = "ntpd";
-	$pconfig['description'] = gettext("NTP clock sync");
+	$pconfig['name'] = "pcscd";
+	$pconfig['description'] = gettext("PC/SC Smart Card Daemon");
 	$services[] = $pconfig;
+
+	if (is_array($config['ntpd']) && ($config['ntpd']['enable'] != 'disabled')) {
+		$pconfig = array();
+		$pconfig['name'] = "ntpd";
+		$pconfig['description'] = gettext("NTP clock sync");
+		$services[] = $pconfig;
+	}
 
 	$pconfig = array();
 	$pconfig['name'] = "syslogd";
@@ -476,7 +483,7 @@ function get_service_status($service) {
 			$running = is_pid_running("{$g['varrun_path']}/dhcrelay6.pid");
 			break;
 		case 'ipsec':
-			$running = is_pid_running("{$g['varrun_path']}/charon.pid");
+			$running = (is_pid_running("{$g['varrun_path']}/charon.pid") || is_process_running('charon'));
 			break;
 		default:
 			$running = is_service_running($service['name']);
@@ -630,7 +637,7 @@ function service_control_start($name, $extras) {
 			upnp_action('start');
 			break;
 		case 'ipsec':
-			vpn_ipsec_force_reload();
+			ipsec_force_reload();
 			break;
 		case 'sshd':
 			send_event("service restart sshd");
@@ -647,6 +654,9 @@ function service_control_start($name, $extras) {
 			break;
 		case 'syslogd':
 			system_syslogd_start();
+			break;
+		case 'pcscd':
+			mwexec_bg("service pcscd onestart");
 			break;
 		default:
 			start_service($name);
@@ -705,7 +715,7 @@ function service_control_stop($name, $extras) {
 			killbyname("sshd");
 			break;
 		case 'ipsec':
-			exec("/usr/local/sbin/ipsec stop");
+			exec("/usr/local/sbin/strongswanrc stop");
 			break;
 		case 'openvpn':
 			$vpnmode = htmlspecialchars($extras['vpnmode']);
@@ -726,6 +736,9 @@ function service_control_stop($name, $extras) {
 			}
 			/* Make sure sshguard stops as well */
 			sigkillbyname("sshguard", "TERM");
+			break;
+		case 'pcscd':
+			mwexec_bg("service pcscd onestop");
 			break;
 		default:
 			stop_service($name);
@@ -778,7 +791,7 @@ function service_control_restart($name, $extras) {
 			upnp_action('restart');
 			break;
 		case 'ipsec':
-			vpn_ipsec_force_reload();
+			ipsec_force_reload();
 			break;
 		case 'sshd':
 			send_event("service restart sshd");

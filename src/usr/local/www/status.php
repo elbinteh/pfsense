@@ -5,7 +5,7 @@
  * part of pfSense (https://www.pfsense.org)
  * Copyright (c) 2004-2013 BSD Perimeter
  * Copyright (c) 2013-2016 Electric Sheep Fencing
- * Copyright (c) 2014-2019 Rubicon Communications, LLC (Netgate)
+ * Copyright (c) 2014-2020 Rubicon Communications, LLC (Netgate)
  * All rights reserved.
  *
  * originally based on m0n0wall (http://neon1.net/m0n0wall)
@@ -66,10 +66,10 @@ $filtered_tags = array(
 	'barnyard_dbpwd', 'bcrypt-hash', 'cert_key', 'crypto_password',
 	'crypto_password2', 'dns_nsupdatensupdate_key', 'encryption_password',
 	'etpro_code', 'etprocode', 'gold_encryption_password', 'gold_password',
-	'influx_pass', 'ipsecpsk', 'ldap_bindpw', 'lighttpd_ls_password',
-	'lighttpd_ls_password', 'md5-hash', 'md5password', 'md5sigkey',
-	'md5sigpass', 'nt-hash', 'oinkcode', 'oinkmastercode', 'passphrase',
-	'password', 'passwordagain', 'postgresqlpasswordenc', 'pre-shared-key',
+	'influx_pass', 'ipsecpsk', 'ldap_bindpw', 'ldapbindpass', 'ldap_pass',
+	'lighttpd_ls_password',	'md5-hash', 'md5password', 'md5sigkey',	'md5sigpass', 
+	'nt-hash', 'oinkcode', 'oinkmastercode', 'passphrase', 'password', 
+	'passwordagain', 'pkcs11pin', 'postgresqlpasswordenc', 'pre-shared-key',
 	'proxypass', 'proxy_passwd', 'proxyuser', 'proxy_user', 'prv',
 	'radius_secret', 'redis_password', 'redis_passwordagain', 'rocommunity',
 	'secret', 'shared_key', 'tls', 'tlspskidentity', 'tlspskfile',
@@ -282,6 +282,7 @@ defCmdT("Network-Listen Queues", "/usr/bin/netstat -LaAn");
 defCmdT("Network-Sockets", "/usr/bin/sockstat");
 defCmdT("Network-ARP Table", "/usr/sbin/arp -an");
 defCmdT("Network-NDP Table", "/usr/sbin/ndp -na");
+defCmdT("OS-Kernel Modules", "/sbin/kldstat -v");
 defCmdT("OS-Kernel VMStat", "/usr/bin/vmstat -afimsz");
 
 /* If a device has a switch, put the switch configuration in the status output */
@@ -310,6 +311,7 @@ defCmdT("Firewall-pftop Speed", "/usr/local/sbin/pftop -w 150 -a -b -v speed");
 defCmdT("Firewall-IPFW Rules for Captive Portal", "/sbin/ipfw show");
 defCmdT("Firewall-IPFW Limiter Info", "/sbin/ipfw pipe show");
 defCmdT("Firewall-IPFW Queue Info", "/sbin/ipfw queue show");
+defCmdT("Firewall-IPFW Tables", "/sbin/ipfw table all list");
 
 /* Configuration Files */
 defCmdT("Disk-Contents of var run", "/bin/ls /var/run");
@@ -318,13 +320,21 @@ defCmdT("config.xml", "dumpconfigxml");
 defCmdT("DNS-Resolution Configuration", "/bin/cat /etc/resolv.conf");
 defCmdT("DHCP-IPv4 Configuration", "/bin/cat /var/dhcpd/etc/dhcpd.conf");
 defCmdT("DHCP-IPv6-Configuration", "/bin/cat /var/dhcpd/etc/dhcpdv6.conf");
-defCmdT("IPsec-strongSwan Configuration", "/bin/cat /var/etc/ipsec/strongswan.conf | /usr/bin/sed 's/[[:blank:]]secret = .*//'");
-defCmdT("IPsec-Configuration", "/bin/cat /var/etc/ipsec/ipsec.conf");
-defCmdT("IPsec-Status", "/usr/local/sbin/ipsec statusall");
+defCmdT("IPsec-strongSwan Configuration", '/usr/bin/sed "s/\([[:blank:]]secret = \).*/\1<redacted>/" /var/etc/ipsec/strongswan.conf');
+defCmdT("IPsec-Configuration", '/usr/bin/sed "s/\([[:blank:]]secret = \).*/\1<redacted>/" /var/etc/ipsec/swanctl.conf');
+defCmdT("IPsec-Status-Statistics", "/usr/local/sbin/swanctl --stats --pretty");
+defCmdT("IPsec-Status-Connections", "/usr/local/sbin/swanctl --list-conns");
+defCmdT("IPsec-Status-Active SAs", "/usr/local/sbin/swanctl --list-sas");
+defCmdT("IPsec-Status-Policies", "/usr/local/sbin/swanctl --list-pols");
+defCmdT("IPsec-Status-Certificates", "/usr/local/sbin/swanctl --list-certs --utc");
+defCmdT("IPsec-Status-Pools", "/usr/local/sbin/swanctl --list-pools --leases");
 defCmdT("IPsec-SPD", "/sbin/setkey -DP");
 defCmdT("IPsec-SAD", "/sbin/setkey -D");
 if (file_exists("/cf/conf/upgrade_log.txt")) {
 	defCmdT("OS-Upgrade Log", "/bin/cat /cf/conf/upgrade_log.txt");
+}
+if (file_exists("/cf/conf/upgrade_log.latest.txt")) {
+	defCmdT("OS-Upgrade Log Latest", "/bin/cat /cf/conf/upgrade_log.latest.txt");
 }
 if (file_exists("/boot/loader.conf")) {
 	defCmdT("OS-Boot Loader Configuration", "/bin/cat /boot/loader.conf");
@@ -334,6 +344,16 @@ if (file_exists("/boot/loader.conf.local")) {
 }
 if (file_exists("/var/etc/filterdns.conf")) {
 	defCmdT("DNS-filterdns Daemon Configuration", "/bin/cat /var/etc/filterdns.conf");
+}
+
+if (is_dir("/var/etc/openvpn")) {
+	foreach(glob('/var/etc/openvpn/*/config.ovpn') as $file) {
+		$ovpnfile = explode('/', $file);
+		if (!count($ovpnfile) || (count($ovpnfile) < 6)) {
+			continue;
+		}
+		defCmdT("OpenVPN-Configuration {$ovpnfile[4]}", "/bin/cat " . escapeshellarg($file));
+	}
 }
 
 /* Logs */
@@ -373,8 +393,8 @@ defCmdT("OS-Message Buffer (Boot)", "/bin/cat /var/log/dmesg.boot");
 defCmdT("OS-sysctl values", "/sbin/sysctl -aq");
 defCmdT("OS-Kernel Environment", "/bin/kenv");
 defCmdT("OS-Kernel Memory Usage", "/usr/local/sbin/kmemusage.sh");
-defCmdT("OS-Installed Packages", "/usr/sbin/pkg info");
-defCmdT("OS-Package Manager Configuration", "/usr/sbin/pkg -vv");
+defCmdT("OS-Installed Packages", "/usr/local/sbin/pkg-static info");
+defCmdT("OS-Package Manager Configuration", "/usr/local/sbin/pkg-static -vv");
 defCmdT("Hardware-PCI Devices", "/usr/sbin/pciconf -lvb");
 defCmdT("Hardware-USB Devices", "/usr/sbin/usbconfig dump_device_desc");
 

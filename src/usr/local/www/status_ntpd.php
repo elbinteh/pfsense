@@ -5,7 +5,7 @@
  * part of pfSense (https://www.pfsense.org)
  * Copyright (c) 2004-2013 BSD Perimeter
  * Copyright (c) 2013-2016 Electric Sheep Fencing
- * Copyright (c) 2014-2019 Rubicon Communications, LLC (Netgate)
+ * Copyright (c) 2014-2020 Rubicon Communications, LLC (Netgate)
  * Copyright (c) 2013 Dagorlad
  * All rights reserved.
  *
@@ -38,20 +38,21 @@ require_once("guiconfig.inc");
 $allow_query = !isset($config['ntpd']['noquery']);
 if (!empty($config['ntpd']['restrictions']['row']) && is_array($config['ntpd']['restrictions']['row'])) {
 	foreach ($config['ntpd']['restrictions']['row'] as $v) {
-		if (ip_in_subnet($_SERVER['REMOTE_ADDR'], "{$v['acl_network']}/{$v['mask']}")) {
+		if (ip_in_subnet('127.0.0.1', "{$v['acl_network']}/{$v['mask']}") || 
+		    ip_in_subnet('::1', "{$v['acl_network']}/{$v['mask']}")) {
 			$allow_query = !isset($v['noquery']);
 		}
 	}
 }
 
-if ($allow_query) {
+if ($allow_query && ($config['ntpd']['enable'] != 'disabled')) {
 	if (isset($config['system']['ipv6allow'])) {
 		$inet_version = "";
 	} else {
 		$inet_version = " -4";
 	}
 
-	exec("/usr/local/sbin/ntpq -pn $inet_version | /usr/bin/tail +3", $ntpq_output);
+	exec('/usr/local/sbin/ntpq -pnw ' . $inet_version . ' | /usr/bin/tail +3 | /usr/bin/awk -v RS= \'{gsub(/\n[[:space:]][[:space:]]+/," ")}1\'', $ntpq_output);
 
 	$ntpq_servers = array();
 	foreach ($ntpq_output as $line) {
@@ -205,8 +206,13 @@ if ($_REQUEST['ajax']) {
 function print_status() {
 	global $config, $ntpq_servers, $allow_query;
 
-	if (!$allow_query):
-
+	if ($config['ntpd']['enable'] == 'disabled'):
+		print("<tr>\n");
+		print('<td class="warning" colspan="11">');
+		printf(gettext('NTP Server is disabled'));
+		print("</td>\n");
+		print("</tr>\n");
+	elseif (!$allow_query):
 		print("<tr>\n");
 		print('<td class="warning" colspan="11">');
 		printf(gettext('Statistics unavailable because ntpq and ntpdc queries are disabled in the %1$sNTP service settings%2$s'), '<a href="services_ntpd.php">', '</a>');
@@ -309,11 +315,11 @@ include("head.inc");
 					<th><?=gettext("Stratum")?></th>
 					<th><?=gettext("Type")?></th>
 					<th><?=gettext("When")?></th>
-					<th><?=gettext("Poll")?></th>
+					<th><?=gettext("Poll (s)")?></th>
 					<th><?=gettext("Reach")?></th>
-					<th><?=gettext("Delay")?></th>
-					<th><?=gettext("Offset")?></th>
-					<th><?=gettext("Jitter")?></th>
+					<th><?=gettext("Delay (ms)")?></th>
+					<th><?=gettext("Offset (ms)")?></th>
+					<th><?=gettext("Jitter (ms)")?></th>
 				</tr>
 			</thead>
 			<tbody id="ntpbody">

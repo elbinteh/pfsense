@@ -5,7 +5,7 @@
  * part of pfSense (https://www.pfsense.org)
  * Copyright (c) 2004-2013 BSD Perimeter
  * Copyright (c) 2013-2016 Electric Sheep Fencing
- * Copyright (c) 2014-2019 Rubicon Communications, LLC (Netgate)
+ * Copyright (c) 2014-2020 Rubicon Communications, LLC (Netgate)
  * All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -128,6 +128,13 @@ if ($_POST['save'] || $_POST['force']) {
 		} elseif (($pconfig['type'] == "route53") || ($pconfig['type'] == "route53-v6")) {
 			$host_to_check = $_POST['host'];
 			$allow_wildcard = true;
+		} elseif ($pconfig['type'] == "hover") {
+			/* hover allows hostnames '@' and '*' also */
+			if ((strcmp("@", $_POST['host']) == 0) || (strcmp("*", $_POST['host']) == 0)) {
+				$host_to_check = $_POST['domainname'];
+			} else {
+				$host_to_check = $_POST['host'] . '.' . $_POST['domainname'];
+			}
 		} else {
 			$host_to_check = $_POST['host'];
 
@@ -315,7 +322,8 @@ $group->setHelp('Enter the complete fully qualified domain name. Example: myhost
 			'GleSYS: Enter the record ID.%1$s' .
 			'DNSimple: Enter only the domain name.%1$s' .
 			'Namecheap, Cloudflare, GratisDNS, Hover, ClouDNS, GoDaddy, Linode: Enter the hostname and the domain separately, with the domain being the domain or subdomain zone being handled by the provider.%1$s' .
-			'Cloudflare, DigitalOcean, Linode: Enter @ as the hostname to indicate an empty field.', '<br />');
+			'DigitalOcean: Enter the record ID as the hostname and the domain separately.%1$s' .
+			'Cloudflare, Linode: Enter @ as the hostname to indicate an empty field.', '<br />');
 
 $section->add($group);
 
@@ -359,10 +367,10 @@ $section->addInput(new Form_Checkbox(
 
 $section->addInput(new Form_Checkbox(
 	'curl_ssl_verifypeer',
-	'HTTP API SSL Options',
-	'Verify SSL Certificate Trust',
+	'HTTP API SSL/TLS Options',
+	'Verify SSL/TLS Certificate Trust',
 	$pconfig['curl_ssl_verifypeer']
-))->setHelp('When set, the server must provide a valid certificate trust chain which can be verified by this firewall.');
+))->setHelp('When set, the server must provide a valid SSL/TLS certificate trust chain which can be verified by this firewall.');
 
 $section->addInput(new Form_Input(
 	'username',
@@ -377,7 +385,8 @@ $section->addInput(new Form_Input(
 			'Route 53: Enter the Access Key ID.%1$s' .
 			'GleSYS: Enter the API user.%1$s' .
 			'Dreamhost: Enter a value to appear in the DNS record comment.%1$s' .
-			'Godaddy:: Enter the API key.%1$s' .
+			'Godaddy: Enter the API key.%1$s' .
+			'Cloudflare: Enter email for Global API Key or Zone ID for API token.%1$s' .
 			'For Custom Entries, Username and Password represent HTTP Authentication username and passwords.', '<br />');
 
 $section->addPassword(new Form_Input(
@@ -388,7 +397,6 @@ $section->addPassword(new Form_Input(
 ))->setHelp('FreeDNS (freedns.afraid.org): Enter the "Authentication Token" provided by FreeDNS.%1$s' .
 			'Azure: client secret of the AD application%1$s' .
 			'DNS Made Easy: Dynamic DNS Password%1$s' .
-			'DNSimple: User account token%1$s' .
 			'DigitalOcean: Enter API token%1$s' .
 			'Route 53: Enter the Secret Access Key.%1$s' .
 			'GleSYS: Enter the API key.%1$s' .
@@ -397,7 +405,7 @@ $section->addPassword(new Form_Input(
 			'GoDaddy: Enter the API secret.%1$s' .
 			'DNSimple: Enter the API token.%1$s' .
 			'Linode: Enter the Personal Access Token.%1$s' .
-			'Cloudflare: Enter the Global API Key.', '<br />');
+			'Cloudflare: Enter the Global API Key or API token with DNS edit permisson on the provided zone.', '<br />');
 
 $section->addInput(new Form_Input(
 	'zoneid',
@@ -571,7 +579,7 @@ events.push(function() {
 				hideCheckbox('wildcard', true);
 				hideCheckbox('proxied', false);
 				hideInput('zoneid', true);
-				hideInput('ttl', true);
+				hideInput('ttl', false);
 				break;
 			case "digitalocean":
 		        case "digitalocean-v6":

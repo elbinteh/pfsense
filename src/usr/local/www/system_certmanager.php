@@ -5,7 +5,7 @@
  * part of pfSense (https://www.pfsense.org)
  * Copyright (c) 2004-2013 BSD Perimeter
  * Copyright (c) 2013-2016 Electric Sheep Fencing
- * Copyright (c) 2014-2019 Rubicon Communications, LLC (Netgate)
+ * Copyright (c) 2014-2020 Rubicon Communications, LLC (Netgate)
  * Copyright (c) 2008 Shrew Soft Inc
  * All rights reserved.
  *
@@ -163,12 +163,19 @@ switch ($act) {
 		/* Exporting a private key */
 		$keyout = base64_decode($thiscert['prv']);
 		if (isset($_POST['exportpass']) && !empty($_POST['exportpass'])) {
-			$res_key = openssl_pkey_get_private($keyout);
-			if ($res_key) {
-				openssl_pkey_export($res_key, $keyout, $_POST['exportpass']);
-			} else {
-				$savemsg = gettext("Unable to export password-protected private key.");
+			if ((strlen($_POST['exportpass']) < 4) or (strlen($_POST['exportpass']) > 1023)) {
+				$savemsg = gettext("Export password must be in 4 to 1023 characters.");
 				$class = 'danger';
+				break;
+			} else {
+				$res_key = openssl_pkey_get_private($keyout);
+				if ($res_key) {
+					$args = array('encrypt_key_cipher' => OPENSSL_CIPHER_AES_256_CBC);
+					openssl_pkey_export($res_key, $keyout, $_POST['exportpass'], $args);
+				} else {
+					$savemsg = gettext("Unable to export password-protected private key.");
+					$class = 'danger';
+				}
 			}
 		}
 		if (!empty($keyout)) {
@@ -177,9 +184,20 @@ switch ($act) {
 		break;
 	case 'p12':
 		/* Exporting a PKCS#12 file containing the certificate, key, and (if present) CA */
-		$password = (isset($_POST['exportpass']) && !empty($_POST['exportpass'])) ? $_POST['exportpass'] : null;
+		if (isset($_POST['exportpass']) && !empty($_POST['exportpass'])) {
+			if ((strlen($_POST['exportpass']) < 4) or (strlen($_POST['exportpass']) > 1023)) {
+				$savemsg = gettext("Export password must be in 4 to 1023 characters.");
+				$class = 'danger';
+				break;
+			} else {
+				$password = $_POST['exportpass'];
+			}
+		} else {
+			$password = null;
+		}
 		$args = array();
 		$args['friendly_name'] = $thiscert['descr'];
+		$args['encrypt_key_cipher'] = OPENSSL_CIPHER_AES_256_CBC;
 		$ca = lookup_ca($thiscert['caref']);
 		if ($ca) {
 			/* If the CA can be found, then add the CA to the container */
@@ -228,16 +246,15 @@ if ($_POST['save'] == gettext("Save")) {
 		case 'edit':
 		case 'import':
 			$reqdfields = explode(" ",
-				"descr cert key");
+				"descr cert");
 			$reqdfieldsn = array(
 				gettext("Descriptive name"),
-				gettext("Certificate data"),
-				gettext("Key data"));
+				gettext("Certificate data"));
 			if ($_POST['cert'] && (!strstr($_POST['cert'], "BEGIN CERTIFICATE") || !strstr($_POST['cert'], "END CERTIFICATE"))) {
 				$input_errors[] = gettext("This certificate does not appear to be valid.");
 			}
 
-			if (cert_get_publickey($_POST['cert'], false) != cert_get_publickey($_POST['key'], false, 'prv')) {
+			if ($_POST['key'] && (cert_get_publickey($_POST['cert'], false) != cert_get_publickey($_POST['key'], false, 'prv'))) {
 				$input_errors[] = gettext("The submitted private key does not match the submitted certificate data.");
 			}
 			break;
@@ -746,8 +763,8 @@ if (in_array($act, array('new', 'edit')) || (($_POST['save'] == gettext("Save"))
 		$pconfig['csrsign_lifetime'] ? $pconfig['csrsign_lifetime']:$default_lifetime,
 		['max' => $max_lifetime]
 	))->setHelp('The length of time the signed certificate will be valid, in days. %1$s' .
-		'Server certificates should not have a lifetime over 825 days or some platforms ' .
-		'may consider the certificate invalid.', '<br/>');
+		'Server certificates should not have a lifetime over %2$s days or some platforms ' .
+		'may consider the certificate invalid.', '<br/>', $cert_strict_values['max_server_cert_lifetime']);
 	$section->addInput(new Form_Select(
 		'csrsign_digest_alg',
 		'*Digest Algorithm',
@@ -776,17 +793,19 @@ if (in_array($act, array('new', 'edit')) || (($_POST['save'] == gettext("Save"))
 
 	$section->addInput(new Form_Textarea(
 		'key',
-		'*Private key data',
+		'Private key data',
 		$pconfig['key']
-	))->setHelp('Paste a private key in X.509 PEM format here.');
+	))->setHelp('Paste a private key in X.509 PEM format here. This field may remain empty in certain cases, such as when the private key is stored on a PKCS#11 token.');
 
-	$section->addInput(new Form_Input(
-		'exportpass',
-		'Export Password',
-		'password',
-		null,
-		['placeholder' => gettext('Export Password'), 'autocomplete' => 'new-password']
-	))->setHelp('Enter the password to use when using the export buttons below (not stored)')->addClass('toggle-edit collapse');
+	if ($act == 'edit') {
+		$section->addInput(new Form_Input(
+			'exportpass',
+			'Export Password',
+			'password',
+			null,
+			['placeholder' => gettext('Export Password'), 'autocomplete' => 'new-password']
+		))->setHelp('Enter the password to use when using the export buttons below (not stored)')->addClass('toggle-edit collapse');
+	}
 
 	$form->add($section);
 	$section = new Form_Section('Internal Certificate');
@@ -862,8 +881,8 @@ if (in_array($act, array('new', 'edit')) || (($_POST['save'] == gettext("Save"))
 		$pconfig['lifetime'],
 		['max' => $max_lifetime]
 	))->setHelp('The length of time the signed certificate will be valid, in days. %1$s' .
-		'Server certificates should not have a lifetime over 825 days or some platforms ' .
-		'may consider the certificate invalid.', '<br/>');
+		'Server certificates should not have a lifetime over %2$s days or some platforms ' .
+		'may consider the certificate invalid.', '<br/>', $cert_strict_values['max_server_cert_lifetime']);
 
 	$section->addInput(new Form_Input(
 		'dn_commonname',
@@ -1134,7 +1153,7 @@ if (in_array($act, array('new', 'edit')) || (($_POST['save'] == gettext("Save"))
 
 	$form->add($section);
 
-	if ($act == 'edit') {
+	if (($act == 'edit') && !empty($pconfig['key'])) {
 		$form->addGlobal(new Form_Button(
 			'exportpkey',
 			'Export Private Key',
@@ -1349,8 +1368,8 @@ foreach ($a_cert as $cert):
 							<?php endif?>
 							<?php if (is_cert_locally_renewable($cert)): ?>
 								<a href="system_certmanager_renew.php?type=cert&amp;refid=<?=$cert['refid']?>" class="fa fa-repeat" title="<?=gettext("Reissue/Renew")?>"></a>
-							<?php endif ?>
 							<a href="system_certmanager.php?act=p12&amp;id=<?=$cert['refid']?>" class="fa fa-archive" title="<?=gettext("Export P12")?>"></a>
+							<?php endif ?>
 						<?php else: ?>
 							<a href="system_certmanager.php?act=csr&amp;id=<?=$cert['refid']?>" class="fa fa-pencil" title="<?=gettext("Update CSR")?>"></a>
 							<a href="system_certmanager.php?act=req&amp;id=<?=$cert['refid']?>" class="fa fa-sign-in" title="<?=gettext("Export Request")?>"></a>

@@ -5,7 +5,7 @@
  * part of pfSense (https://www.pfsense.org)
  * Copyright (c) 2004-2013 BSD Perimeter
  * Copyright (c) 2013-2016 Electric Sheep Fencing
- * Copyright (c) 2014-2019 Rubicon Communications, LLC (Netgate)
+ * Copyright (c) 2014-2020 Rubicon Communications, LLC (Netgate)
  * All rights reserved.
  *
  * originally based on m0n0wall (http://m0n0.ch/wall)
@@ -87,6 +87,11 @@ if (isset($id) && $a_nat[$id]) {
 		$pconfig['dstmask'], $pconfig['dstnot'],
 		$pconfig['dstbeginport'], $pconfig['dstendport']);
 
+	if (($pconfig['dstbeginport'] == 1) && ($pconfig['dstendport'] == 65535)) {
+		$pconfig['dstbeginport'] = "any";
+		$pconfig['dstendport'] = "any";
+	}
+
 	$pconfig['proto'] = $a_nat[$id]['protocol'];
 	$pconfig['localip'] = $a_nat[$id]['target'];
 	$pconfig['localbeginport'] = $a_nat[$id]['local-port'];
@@ -157,8 +162,9 @@ if ($_POST['save']) {
 		}
 
 		if ($_POST['dstbeginport'] == "any") {
-			$_POST['dstbeginport'] = 0;
-			$_POST['dstendport'] = 0;
+			$_POST['dstbeginport'] = "1";
+			$_POST['dstendport'] = "65535";
+			$_POST['localbeginport'] = "1";
 		} else {
 			if (!$_POST['dstendport']) {
 				$_POST['dstendport'] = $_POST['dstbeginport'];
@@ -791,7 +797,7 @@ $group->add(new Form_IpAddress(
 	null,
 	is_specialnet($pconfig['dst']) ? '': $pconfig['dst'],
 	'ALIASV4V6'
-))->addMask('dstmask', $pconfig['dstmask'], 31)->setHelp('Address/mask');
+))->addMask('dstmask', $pconfig['dstmask'], 31, 1, false)->setHelp('Address/mask');
 
 $section->add($group);
 
@@ -981,9 +987,17 @@ events.push(function() {
 
 		if (($('#dstbeginport').find(":selected").index() == 0) && portsenabled) {
 			disableInput('dstbeginport_cust', false);
+			disableInput('localbeginport', false);
+		} else if (($('#dstbeginport').find(":selected").index() == 1) && portsenabled) {
+			$('#dstbeginport_cust').val('');
+			disableInput('dstbeginport_cust', true);
+			disableInput('localbeginport', true);
+			disableInput('localbeginport_cust', true);
 		} else {
 			$('#dstbeginport_cust').val('');
 			disableInput('dstbeginport_cust', true);
+			disableInput('localbeginport', false);
+			disableInput('localbeginport_cust', false);
 		}
 
 		if (($('#dstendport').find(":selected").index() == 0) && portsenabled) {
@@ -993,7 +1007,8 @@ events.push(function() {
 			disableInput('dstendport_cust', true);
 		}
 
-		if (($('#localbeginport').find(":selected").index() == 0) && portsenabled) {
+		if (($('#localbeginport').find(":selected").index() == 0) &&
+		    ($('#dstbeginport').find(":selected").index() != 1) && portsenabled) {
 			disableInput('localbeginport_cust', false);
 		} else {
 			$('#localbeginport_cust').val('');

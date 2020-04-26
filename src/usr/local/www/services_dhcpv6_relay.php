@@ -5,7 +5,7 @@
  * part of pfSense (https://www.pfsense.org)
  * Copyright (c) 2004-2013 BSD Perimeter
  * Copyright (c) 2013-2016 Electric Sheep Fencing
- * Copyright (c) 2014-2019 Rubicon Communications, LLC (Netgate)
+ * Copyright (c) 2014-2020 Rubicon Communications, LLC (Netgate)
  * Copyright (c) 2003-2004 Justin Ellison <justin@techadvise.com>
  * Copyright (c) 2010 Seth Mos
  * All rights reserved.
@@ -49,7 +49,8 @@ $iflist = array_intersect_key(
 		array_filter(
 			array_keys(get_configured_interface_with_descr()),
 			function($if) {
-				return is_ipaddrv6(get_interface_ipv6($if));
+				return (get_interface_ipv6($if) &&
+				    !is_pseudo_interface(convert_friendly_interface_to_real_interface_name($if)));
 			}
 		)
 	)

@@ -5,7 +5,7 @@
  * part of pfSense (https://www.pfsense.org)
  * Copyright (c) 2004-2013 BSD Perimeter
  * Copyright (c) 2013-2016 Electric Sheep Fencing
- * Copyright (c) 2014-2019 Rubicon Communications, LLC (Netgate)
+ * Copyright (c) 2014-2020 Rubicon Communications, LLC (Netgate)
  * All rights reserved.
  *
  * originally part of m0n0wall (http://m0n0.ch/wall)
@@ -202,10 +202,11 @@ function system_resolvconf_generate($dynupdate = false) {
 				route_add_or_change("-host {$inet6}{$dnsserver} {$gatewayip}");
 			} else {
 				/* Remove old route when disable gw */
-				mwexec("/sbin/route -q delete -host {$inet6}{$dnsserver}");
+				$gatewayip = exec("/sbin/route -n get {$dnsserver} | /usr/bin/awk '/gateway:/ {print $2;}'");
+				mwexec("/sbin/route -q delete -host {$inet6}{$dnsserver} " . escapeshellarg($gatewayip));
 				if (isset($config['system']['route-debug'])) {
 					$mt = microtime();
-					log_error("ROUTING debug: $mt - route delete -host {$inet6}{$dnsserver}");
+					log_error("ROUTING debug: $mt - route delete -host {$inet6}{$dnsserver} {$gatewayip}");
 				}
 			}
 		}
@@ -621,9 +622,16 @@ function system_dhcpleases_configure() {
 		}
 		@unlink($pidfile);
 		mwexec("/usr/local/sbin/dhcpleases -l {$g['dhcpd_chroot_path']}/var/db/dhcpd.leases -d {$config['system']['domain']} -p {$g['varrun_path']}/{$dns_pid} {$unbound_conf} -h {$g['etc_path']}/hosts");
-	} elseif (isvalidpid($pidfile)) {
-		sigkillbypid($pidfile, "TERM");
-		@unlink($pidfile);
+	} else {
+		if (isvalidpid($pidfile)) {
+			sigkillbypid($pidfile, "TERM");
+			@unlink($pidfile);
+		}
+		if (file_exists("{$g['unbound_chroot_path']}/dhcpleases_entries.conf")) {
+			$dhcpleases = fopen("{$g['unbound_chroot_path']}/dhcpleases_entries.conf", "w");
+			ftruncate($dhcpleases, 0);
+			fclose($dhcpleases);
+		}
 	}
 }
 
@@ -938,20 +946,20 @@ function system_staticroutes_configure($interface = "", $update_dns = false) {
 				if (in_array($ip, $ips)) {
 					continue;
 				}
-				mwexec("/sbin/route delete " . escapeshellarg($ip), true);
+				mwexec("/sbin/route delete " . escapeshellarg($ip) . " " . escapeshellarg($gatewayip), true);
 				if (isset($config['system']['route-debug'])) {
 					$mt = microtime();
-					log_error("ROUTING debug: $mt - route delete $ip ");
+					log_error("ROUTING debug: $mt - route delete $ip $gatewayip ");
 				}
 			}
 
 			if (isset($rtent['disabled'])) {
 				/* XXX: This can break things by deleting routes that shouldn't be deleted - OpenVPN, dynamic routing scenarios, etc. redmine #3709 */
 				foreach ($ips as $ip) {
-					mwexec("/sbin/route delete " . escapeshellarg($ip), true);
+					mwexec("/sbin/route delete " . escapeshellarg($ip) . " " . escapeshellarg($gatewayip), true);
 					if (isset($config['system']['route-debug'])) {
 						$mt = microtime();
-						log_error("ROUTING debug: $mt - route delete $ip ");
+						log_error("ROUTING debug: $mt - route delete $ip $gatewayip ");
 					}
 				}
 				continue;
@@ -1026,13 +1034,13 @@ function system_routing_enable() {
 }
 
 function system_webgui_create_certificate() {
-	global $config, $g;
+	global $config, $g, $cert_strict_values;
 
 	init_config_arr(array('ca'));
 	$a_ca = &$config['ca'];
 	init_config_arr(array('cert'));
 	$a_cert = &$config['cert'];
-	log_error(gettext("Creating SSL Certificate for this host"));
+	log_error(gettext("Creating SSL/TLS Certificate for this host"));
 
 	$cert = array();
 	$cert['refid'] = uniqid();
@@ -1044,7 +1052,7 @@ function system_webgui_create_certificate() {
 		'commonName' => $cert_hostname,
 		'subjectAltName' => "DNS:{$cert_hostname}");
 	$old_err_level = error_reporting(0); /* otherwise openssl_ functions throw warnings directly to a page screwing menu tab */
-	if (!cert_create($cert, null, 2048, 825, $dn, "self-signed", "sha256")) {
+	if (!cert_create($cert, null, 2048, $cert_strict_values['max_server_cert_lifetime'], $dn, "self-signed", "sha256")) {
 		while ($ssl_err = openssl_error_string()) {
 			log_error(sprintf(gettext("Error creating WebGUI Certificate: openssl library returns: %s"), $ssl_err));
 		}
@@ -1055,7 +1063,7 @@ function system_webgui_create_certificate() {
 
 	$a_cert[] = $cert;
 	$config['system']['webgui']['ssl-certref'] = $cert['refid'];
-	write_config(sprintf(gettext("Generated new self-signed HTTPS certificate (%s)"), $cert['refid']));
+	write_config(sprintf(gettext("Generated new self-signed SSL/TLS certificate for HTTPS (%s)"), $cert['refid']));
 	return $cert;
 }
 
@@ -1158,6 +1166,10 @@ function get_dns_nameservers($add_v6_brackets = false) {
 				$dns_nameservers[] = $nameserver;
 			}
 		}
+	} else {
+		/* If override is disallowed, ignore the dynamic NS entries
+		 * https://redmine.pfsense.org/issues/9963 */
+		$ns = array();
 	}
 	if (is_array($syscfg['dnsserver'])) {
 		foreach ($syscfg['dnsserver'] as $sys_dnsserver) {
@@ -1498,6 +1510,49 @@ function system_timezone_configure() {
 	}
 }
 
+function check_gps_speed($device) {
+	usleep(1000);
+	// Set timeout to 5s
+	$timeout=microtime(true)+5;
+	if ($fp = fopen($device, 'r')) {
+		stream_set_blocking($fp, 0);
+		stream_set_timeout($fp, 5);
+		$contents = "";
+		$cnt = 0;
+		$buffersize = 256;
+		do {
+			$c = fread($fp, $buffersize - $cnt);
+
+			// Wait for data to arive
+			if (($c === false) || (strlen($c) == 0)) {
+				usleep(500);
+				continue;
+			}
+
+			$contents.=$c;
+			$cnt = $cnt + strlen($c);
+		} while (($cnt < $buffersize) && (microtime(true) < $timeout));
+		fclose($fp);
+
+		$nmeasentences = ['RMC', 'GGA', 'GLL', 'ZDA', 'ZDG', 'PGRMF'];
+		foreach ($nmeasentences as $sentence) {
+			if (strpos($contents, $sentence) > 0) {
+				return true;
+			}
+		}
+		if (strpos($contents, '0') > 0) {
+			$filters = ['`', '?', '/', '~'];
+			foreach ($filters as $filter) {
+				if (strpos($contents, $filter) !== false) {
+					return false;
+				}
+			}
+			return true;
+		}
+	}
+	return false;
+}
+
 /* Generate list of possible NTP poll values
  * https://redmine.pfsense.org/issues/9439 */
 global $ntp_poll_min_value, $ntp_poll_max_value;
@@ -1543,6 +1598,13 @@ function system_ntp_fixup_poll_value($type, $configvalue, $default) {
 
 function system_ntp_setup_gps($serialport) {
 	global $config, $g;
+
+	if (is_array($config['ntpd']) && ($config['ntpd']['enable'] == 'disabled')) {
+		return false;
+	}
+
+	init_config_arr(array('ntpd', 'gps'));
+
 	$gps_device = '/dev/gps0';
 	$serialport = '/dev/'.$serialport;
 
@@ -1555,28 +1617,42 @@ function system_ntp_setup_gps($serialport) {
 	@symlink($serialport, $gps_device);
 
 	$gpsbaud = '4800';
-	if (is_array($config['ntpd']) && is_array($config['ntpd']['gps']) && !empty($config['ntpd']['gps']['speed'])) {
-		switch ($config['ntpd']['gps']['speed']) {
-			case '16':
-				$gpsbaud = '9600';
-				break;
-			case '32':
-				$gpsbaud = '19200';
-				break;
-			case '48':
-				$gpsbaud = '38400';
-				break;
-			case '64':
-				$gpsbaud = '57600';
-				break;
-			case '80':
-				$gpsbaud = '115200';
-				break;
-		}
+	$speeds = array(
+		0 => '4800', 
+		16 => '9600', 
+		32 => '19200', 
+		48 => '38400', 
+		64 => '57600', 
+		80 => '115200'
+	);
+	if (!empty($config['ntpd']['gps']['speed']) && array_key_exists($config['ntpd']['gps']['speed'], $speeds)) {
+		$gpsbaud = $speeds[$config['ntpd']['gps']['speed']];
 	}
 
-	/* Configure the serial port for raw IO and set the speed */
-	mwexec("stty -f {$serialport}.init raw speed {$gpsbaud}");
+	system_ntp_setup_rawspeed($serialport, $gpsbaud);
+
+	$autospeed = ($config['ntpd']['gps']['speed'] == 'autoalways' || $config['ntpd']['gps']['speed'] == 'autoset');
+	if ($autospeed || ($config['ntpd']['gps']['autobaudinit'] && !check_gps_speed($gps_device))) {
+		$found = false;
+		foreach ($speeds as $baud) {
+			system_ntp_setup_rawspeed($serialport, $baud);
+			if ($found = check_gps_speed($gps_device)) {
+				if ($autospeed) {
+					$saveconfig = ($config['ntpd']['gps']['speed'] == 'autoset');
+					$config['ntpd']['gps']['speed'] = array_search($baud, $speeds);
+					$gpsbaud = $baud;
+					if ($saveconfig) {
+						write_config(sprintf(gettext('Autoset GPS baud rate to %s'), $baud));
+					}
+				}
+				break;
+			}
+		}
+		if ($found === false) {
+			log_error(gettext("Could not find correct GPS baud rate."));
+			return false;
+		}
+	}
 
 	/* Send the following to the GPS port to initialize the GPS */
 	if (is_array($config['ntpd']) && is_array($config['ntpd']['gps']) && !empty($config['ntpd']['gps']['type'])) {
@@ -1589,13 +1665,27 @@ function system_ntp_setup_gps($serialport) {
 	@file_put_contents('/tmp/gps.init', $gps_init);
 	mwexec("cat /tmp/gps.init > {$serialport}");
 
+	if ($found && $config['ntpd']['gps']['autobaudinit']) {
+		system_ntp_setup_rawspeed($serialport, $gpsbaud);
+	}
+
+	/* Remove old /etc/remote entry if it exists */
+	if (mwexec("/usr/bin/grep -c '^gps0' /etc/remote") == 0) {
+		mwexec("/usr/bin/sed -i '' -n '/gps0/!p' /etc/remote");
+	}
+
 	/* Add /etc/remote entry in case we need to read from the GPS with tip */
-	if (intval(`grep -c '^gps0' /etc/remote`) == 0) {
+	if (mwexec("/usr/bin/grep -c '^gps0' /etc/remote") != 0) {
 		@file_put_contents("/etc/remote", "gps0:dv={$serialport}:br#{$gpsbaud}:pa=none:\n", FILE_APPEND);
 	}
 
-
 	return true;
+}
+
+// Configure the serial port for raw IO and set the speed
+function system_ntp_setup_rawspeed($serialport, $baud) {
+	mwexec("/bin/stty -f " .  escapeshellarg($serialport) . " raw speed " . escapeshellarg($baud));
+	mwexec("/bin/stty -f " .  escapeshellarg($serialport) . ".init raw speed " . escapeshellarg($baud));
 }
 
 function system_ntp_setup_pps($serialport) {
@@ -1607,6 +1697,10 @@ function system_ntp_setup_pps($serialport) {
 	if (!file_exists($serialport)) {
 		return false;
 	}
+	// If ntpd is disabled, just return
+	if (is_array($config['ntpd']) && ($config['ntpd']['enable'] == 'disabled')) {
+		return false;
+	}
 
 	// Create symlink that ntpd requires
 	unlink_if_exists($pps_device);
@@ -1615,7 +1709,6 @@ function system_ntp_setup_pps($serialport) {
 
 	return true;
 }
-
 
 function system_ntp_configure() {
 	global $config, $g;
@@ -1632,6 +1725,26 @@ function system_ntp_configure() {
 	if (!is_array($config['ntpd'])) {
 		$config['ntpd'] = array();
 	}
+	// ntpd is disabled, just stop it and return
+	if ($config['ntpd']['enable'] == 'disabled') {
+		while (isvalidpid("{$g['varrun_path']}/ntpd.pid")) {
+			killbypid("{$g['varrun_path']}/ntpd.pid");
+		}
+		@unlink("{$g['varrun_path']}/ntpd.pid");
+		@unlink("{$g['varetc_path']}/ntpd.conf");
+		log_error("NTPD is disabled.");
+		return;
+	}
+
+	if (platform_booting()) {
+		echo gettext("Starting NTP Server...");
+	}
+
+	/* if ntpd is running, kill it */
+	while (isvalidpid("{$g['varrun_path']}/ntpd.pid")) {
+		killbypid("{$g['varrun_path']}/ntpd.pid");
+	}
+	@unlink("{$g['varrun_path']}/ntpd.pid");
 
 	$ntpcfg = "# \n";
 	$ntpcfg .= "# pfSense ntp configuration file \n";
@@ -1639,12 +1752,19 @@ function system_ntp_configure() {
 	$ntpcfg .= "tinker panic 0 \n";
 
 	/* Add Orphan mode */
-	$ntpcfg .= "# Orphan mode stratum\n";
+	$ntpcfg .= "# Orphan mode stratum and Maximum candidate NTP peers\n";
 	$ntpcfg .= 'tos orphan ';
 	if (!empty($config['ntpd']['orphan'])) {
 		$ntpcfg .= $config['ntpd']['orphan'];
 	} else {
 		$ntpcfg .= '12';
+	}
+	/* Add Maximum candidate NTP peers */
+	$ntpcfg .= ' maxclock ';
+	if (!empty($config['ntpd']['ntpmaxpeers'])) {
+		$ntpcfg .= $config['ntpd']['ntpmaxpeers'];
+	} else {
+		$ntpcfg .= '5';
 	}
 	$ntpcfg .= "\n";
 
@@ -1690,7 +1810,6 @@ function system_ntp_configure() {
 
 	/* Add GPS configuration */
 	if (is_array($config['ntpd']['gps']) && !empty($config['ntpd']['gps']['port']) &&
-	    file_exists('/dev/'.$config['ntpd']['gps']['port']) &&
 	    system_ntp_setup_gps($config['ntpd']['gps']['port'])) {
 		$ntpcfg .= "\n";
 		$ntpcfg .= "# GPS Setup\n";
@@ -1757,7 +1876,6 @@ function system_ntp_configure() {
 		}
 		$ntpcfg .= "\n";
 	} elseif (is_array($config['ntpd']) && !empty($config['ntpd']['gpsport']) &&
-	    file_exists('/dev/'.$config['ntpd']['gpsport']) &&
 	    system_ntp_setup_gps($config['ntpd']['gpsport'])) {
 		/* This handles a 2.1 and earlier config */
 		$ntpcfg .= "# GPS Setup\n";
@@ -1862,7 +1980,7 @@ function system_ntp_configure() {
 		$ntpcfg .= ' notrap';
 	}
 
-	/* Pools require "restrict source" and cannot contain "nopeer". */
+	/* Pools require "restrict source" and cannot contain "nopeer" and "noserve". */
 	if ($have_pools) {
 		$ntpcfg .= "\nrestrict source";
 		if (empty($config['ntpd']['kod'])) { /*note: this one works backwards */
@@ -1873,9 +1991,6 @@ function system_ntp_configure() {
 		}
 		if (!empty($config['ntpd']['noquery'])) {
 			$ntpcfg .= ' noquery';
-		}
-		if (!empty($config['ntpd']['noserve'])) {
-			$ntpcfg .= ' noserve';
 		}
 		if (empty($config['ntpd']['notrap'])) { /*note: this one works backwards */
 			$ntpcfg .= ' notrap';
@@ -1959,22 +2074,21 @@ function system_ntp_configure() {
 		return;
 	}
 
-	/* if ntpd is running, kill it */
-	while (isvalidpid("{$g['varrun_path']}/ntpd.pid")) {
-		killbypid("{$g['varrun_path']}/ntpd.pid");
-	}
-	@unlink("{$g['varrun_path']}/ntpd.pid");
-
 	/* if /var/empty does not exist, create it */
 	if (!is_dir("/var/empty")) {
 		mkdir("/var/empty", 0555, true);
 	}
 
-	/* start opentpd, set time now and use /var/etc/ntpd.conf */
+	/* start ntpd, set time now and use /var/etc/ntpd.conf */
 	mwexec("/usr/local/sbin/ntpd -g -c {$g['varetc_path']}/ntpd.conf -p {$g['varrun_path']}/ntpd.pid", false, true);
 
 	// Note that we are starting up
 	log_error("NTPD is starting up.");
+
+	if (platform_booting()) {
+		echo gettext("done.") . "\n";
+	}
+
 	return;
 }
 

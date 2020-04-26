@@ -5,7 +5,7 @@
  * part of pfSense (https://www.pfsense.org)
  * Copyright (c) 2004-2013 BSD Perimeter
  * Copyright (c) 2013-2016 Electric Sheep Fencing
- * Copyright (c) 2014-2019 Rubicon Communications, LLC (Netgate)
+ * Copyright (c) 2014-2020 Rubicon Communications, LLC (Netgate)
  * Copyright (c) 2010 Seth Mos <seth.mos@dds.nl>
  * All rights reserved.
  *
@@ -146,7 +146,7 @@ if ($_POST['save']) {
 
 	if (!$input_errors) {
 		$mapent = array();
-		$mapent['duid'] = $_POST['duid'];
+		$mapent['duid'] = str_replace("-", ":", $_POST['duid']);
 		$mapent['ipaddrv6'] = $_POST['ipaddrv6'];
 		$mapent['hostname'] = $_POST['hostname'];
 		$mapent['descr'] = $_POST['descr'];
@@ -206,7 +206,8 @@ $section->addInput(new Form_Input(
 	['placeholder' => 'DUID-LLT - ETH -- TIME --- ---- address ---- xx:xx:xx:xx:xx:xx:xx:xx:xx:xx:xx:xx:xx:xx']
 ))->setHelp('Enter a DUID in the following format: %1$s %2$s', '<br />',
 			'DUID-LLT - ETH -- TIME --- ---- address ---- ' .
-			'xx:xx:xx:xx:xx:xx:xx:xx:xx:xx:xx:xx:xx:xx');
+			'xx:xx:xx:xx:xx:xx:xx:xx:xx:xx:xx:xx:xx:xx ---- ' .
+			'xx-xx-xx-xx-xx-xx-xx-xx-xx-xx-xx-xx-xx-xx');
 
 $section->addInput(new Form_Input(
 	'ipaddrv6',

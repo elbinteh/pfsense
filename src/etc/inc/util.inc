@@ -5,7 +5,7 @@
  * part of pfSense (https://www.pfsense.org)
  * Copyright (c) 2004-2013 BSD Perimeter
  * Copyright (c) 2013-2016 Electric Sheep Fencing
- * Copyright (c) 2014-2019 Rubicon Communications, LLC (Netgate)
+ * Copyright (c) 2014-2020 Rubicon Communications, LLC (Netgate)
  * All rights reserved.
  *
  * originally part of m0n0wall (http://m0n0.ch/wall)
@@ -998,8 +998,11 @@ function is_hostname($hostname, $allow_wildcard=false) {
 }
 
 /* returns true if $domain is a valid domain name */
-function is_domain($domain, $allow_wildcard=false) {
+function is_domain($domain, $allow_wildcard=false, $trailing_dot=true) {
 	if (!is_string($domain)) {
+		return false;
+	}
+	if (!$trailing_dot && ($domain[strlen($domain)-1] == ".")) {
 		return false;
 	}
 	if ($allow_wildcard) {
@@ -1932,22 +1935,57 @@ function mac_format($clientmac) {
 	}
 }
 
-function resolve_retry($hostname, $retries = 5) {
+function resolve_retry($hostname, $protocol = 'inet', $retries = 5, $numrecords = 1) {
 
-	if (is_ipaddr($hostname)) {
-		return $hostname;
-	}
-
+	$recresult = array();
+	$returnres = array();
 	for ($i = 0; $i < $retries; $i++) {
-		// FIXME: gethostbyname does not work for AAAA hostnames, boo, hiss
-		$ip = gethostbyname($hostname);
-
-		if ($ip && $ip != $hostname) {
-			/* success */
-			return $ip;
+		switch ($protocol) {
+			case 'any':
+				$checkproto = 'is_ipaddr';
+				$dnsproto = DNS_ANY;
+				$dnstype = array('A', 'AAAA');
+				break;
+			case 'inet6':
+				$checkproto = 'is_ipaddrv6';
+				$dnsproto = DNS_AAAA;
+				$dnstype = array('AAAA');
+				break;
+			case 'inet': 
+			default:
+				$checkproto = 'is_ipaddrv4';
+				$dnsproto = DNS_A;
+				$dnstype = array('A');
+				break;
+		}
+		if ($checkproto($hostname)) {
+			return $hostname;
+		}
+		$dnsresult = @dns_get_record($hostname, $dnsproto);
+		if (!empty($dnsresult)) {
+			foreach ($dnsresult as $dnsrec => $ip) {
+				if (is_array($ip)) {
+					if (in_array($ip['type'], $dnstype)) {
+					    if ($checkproto($ip['ip'])) { 
+						    $recresult[] = $ip['ip'];
+					    }
+					    if ($checkproto($ip['ipv6'])) { 
+						    $recresult[] = $ip['ipv6'];
+					    }
+					}
+				}
+			}
 		}
 
 		sleep(1);
+	}
+
+	if (!empty($recresult)) {
+		if ($numrecords == 1) {
+			return $recresult[0];
+		} else {
+			return array_slice($recresult, 0, $numrecords);
+		}
 	}
 
 	return false;
@@ -1978,6 +2016,23 @@ function format_number($num, $precision = 3) {
 	$num = round($num, $precision);
 
 	return ("$num {$units[$i]}");
+}
+
+
+function unformat_number($formated_num) {
+	$num = strtoupper($formated_num);
+    
+	if ( strpos($num,"T") !== false ) {
+		$num = str_replace("T","",$num) * 1000 * 1000 * 1000 * 1000;
+	} else if ( strpos($num,"G") !== false ) {
+		$num = str_replace("G","",$num) * 1000 * 1000 * 1000;
+	} else if ( strpos($num,"M") !== false ) {
+		$num = str_replace("M","",$num) * 1000 * 1000;
+	} else if ( strpos($num,"K") !== false ) {
+		$num = str_replace("K","",$num) * 1000;
+	}
+    
+	return $num;
 }
 
 function update_filter_reload_status($text, $new=false) {
@@ -2514,6 +2569,39 @@ function route_add_or_change($args) {
 	return ($rc == 0);
 }
 
+function set_ipv6routes_mtu($interface, $mtu) {
+	global $config, $g;
+
+	$ipv6mturoutes = array();
+	$if = convert_real_interface_to_friendly_interface_name($interface);
+	if (!$config['interfaces'][$if]['ipaddrv6']) {
+		return;
+	}
+	$a_gateways = return_gateways_array();
+	$a_staticroutes = get_staticroutes(false, false, true);
+	foreach ($a_gateways as $gate) {
+		foreach ($a_staticroutes as $sroute) {
+			if ($gate['interface'] == $interface &&
+			    $sroute['gateway'] == $gate['name']) {
+				$tgt = $sroute['network'];
+				$gateway = $gate['gateway'];
+				$ipv6mturoutes[$tgt] = $gateway;
+			}
+		}
+		if ($gate['interface'] == $interface &&
+		    $gate['isdefaultgw']) {
+			$tgt = "default";
+			$gateway = $gate['gateway'];
+			$ipv6mturoutes[$tgt] = $gateway;
+		}
+	}
+	foreach ($ipv6mturoutes as $tgt => $gateway) {
+		mwexec("/sbin/route change -6 -mtu " . escapeshellarg($mtu) .
+		    " " . escapeshellarg($tgt) . " " .
+		    escapeshellarg($gateway));
+	}
+}
+
 function alias_to_subnets_recursive($name, $returnhostnames = false) {
 	global $aliastable;
 	$result = array();
@@ -2941,6 +3029,24 @@ function is_supported_image($image_filename) {
 		return false;
 	} else {
 		return $img_info[2];
+	}
+}
+
+function get_lagg_ports ($laggport) {
+	$laggp = array();
+	foreach ($laggport as $lgp) {
+		list($lpname, $lpinfo) = explode(" ", $lgp);
+		preg_match('~<(.+)>~', $lpinfo, $lgportmode);
+		if ($lgportmode[1]) {
+			$laggp[] = $lpname . " (" . $lgportmode[1] . ")";
+		} else {
+			$laggp[] = $lpname;
+		}
+	}
+	if ($laggp) {
+		return implode(", ", $laggp);
+	} else {
+		return false;
 	}
 }
 

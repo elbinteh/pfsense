@@ -5,7 +5,7 @@
  * part of pfSense (https://www.pfsense.org)
  * Copyright (c) 2004-2013 BSD Perimeter
  * Copyright (c) 2013-2016 Electric Sheep Fencing
- * Copyright (c) 2014-2019 Rubicon Communications, LLC (Netgate)
+ * Copyright (c) 2014-2020 Rubicon Communications, LLC (Netgate)
  * All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -1947,7 +1947,7 @@ function upgrade_052_to_053() {
 		/* create cert entry */
 		$cert = array();
 		$cert['refid'] = uniqid();
-		$cert['descr'] = "webConfigurator SSL Certificate";
+		$cert['descr'] = "webConfigurator SSL/TLS Certificate";
 		$cert['crt'] = $config['system']['webgui']['certificate'];
 		$cert['prv'] = $config['system']['webgui']['private-key'];
 		$config['cert'][] = $cert;
@@ -5479,17 +5479,31 @@ function upgrade_174_to_175() {
 	if (count($config['ipsec']['phase1'])) {
 		$a_phase1 = &$config['ipsec']['phase1'];
 		foreach($a_phase1 as &$phase1) {
-			if (empty($phase1)) {
+			if (empty($phase1) || !is_array($phase1)) {
 				continue;
 			}
 			$item = array();
-			$item['encryption-algorithm'] = $phase1['encryption-algorithm'];
-			$item['hash-algorithm'] = $phase1['hash-algorithm'];
-			$item['dhgroup'] = $phase1['dhgroup'];
-			$phase1['encryption']['item'][] = $item;
-			unset($phase1['encryption-algorithm']);
-			unset($phase1['hash-algorithm']);
-			unset($phase1['dhgroup']);
+			if (isset($phase1['encryption-algorithm']) && !empty($phase1['encryption-algorithm'])) {
+				$item['encryption-algorithm'] = $phase1['encryption-algorithm'];
+				unset($phase1['encryption-algorithm']);
+			}
+			if (isset($phase1['hash-algorithm']) && !empty($phase1['hash-algorithm'])) {
+				$item['hash-algorithm'] = $phase1['hash-algorithm'];
+				unset($phase1['hash-algorithm']);
+			}
+			if (isset($phase1['dhgroup']) && !empty($phase1['dhgroup'])) {
+				$item['dhgroup'] = $phase1['dhgroup'];
+				unset($phase1['dhgroup']);
+			}
+			if (!empty($item)) {
+				if (!is_array($phase1['encryption'])) {
+					$phase1['encryption'] = array();
+				}
+				if (!is_array($phase1['encryption']['item'])) {
+					$phase1['encryption']['item'] = array();
+				}
+				$phase1['encryption']['item'][] = $item;
+			}
 		}
 	}
 }
@@ -6072,6 +6086,59 @@ function upgrade_198_to_199() {
 		/* If the auth method for this P1 is in the list to change, change it */
 		if (array_key_exists($ph1ent['authentication_method'], $namechanges)) {
 			$ph1ent['authentication_method'] = $namechanges[$ph1ent['authentication_method']];
+		}
+	}
+}
+
+/* Update IPsec reauth and rekey variable names and values based on existing settings
+ * https://redmine.pfsense.org/issues/9983
+ */
+function upgrade_199_to_200() {
+	global $config;
+	init_config_arr(array('ipsec', 'phase1'));
+	foreach ($config['ipsec']['phase1'] as & $ph1ent) {
+		/* Convert lifetime to reauth_time since that's how previous
+		 * versions behaved. */
+		if (isset($ph1ent['reauth_enable'])) {
+			$ph1ent['reauth_time'] = "0";
+			/* If reauth is disabled, set hard P1 lifetime  limit */
+			$ph1ent['over_time'] = $ph1ent['lifetime'];
+		} else {
+			/* Reauth at 90% of requested lifetime, set hard limit at full (relative) lifetime */
+			$ph1ent['reauth_time'] = (int)($ph1ent['lifetime'] * 0.90);
+			$ph1ent['over_time'] = (int)($ph1ent['lifetime'] * 0.10);
+		}
+		/* Auto or IKEv2, rekey items */
+		if (($ph1ent['iketype'] == 'ikev2') || ($ph1ent['iketype'] == 'auto')) {
+			if (isset($ph1ent['rekey_enable'])) {
+				/* Disable rekey */
+				$ph1ent['rekey_time'] = "0";
+				$ph1ent['reauth_time'] = "0";
+				/* If rekey is disabled, set hard P1 lifetime limit */
+				$ph1ent['over_time'] = $ph1ent['lifetime'];
+			} elseif (!empty($ph1ent['margintime'])) {
+				/* If margintime is set, use that to calculate over_time and reauth_time */
+				$ph1ent['reauth_time'] = ($ph1ent['lifetime'] - $ph1ent['margintime']);
+				$ph1ent['over_time'] = $ph1ent['margintime'];
+			}
+		}
+		unset($ph1ent['lifetime'], $ph1ent['reauth_enable'], $ph1ent['rekey_enable'], $ph1ent['margintime']);
+	}
+}
+
+/* Update LDAP transport values */
+function upgrade_200_to_201() {
+	global $config;
+	/* Normalize/correct names (All are TCP) */
+	$namechanges = array(
+		'TCP - Standard' => 'Standard TCP',
+		'TCP - STARTTLS' => 'STARTTLS Encrypted',
+		'SSL - Encrypted' => 'SSL/TLS Encrypted',
+	);
+	init_config_arr(array('system', 'authserver'));
+	foreach ($config['system']['authserver'] as & $authserver) {
+		if (array_key_exists($authserver['ldap_urltype'], $namechanges)) {
+			$authserver['ldap_urltype'] = $namechanges[$authserver['ldap_urltype']];
 		}
 	}
 }

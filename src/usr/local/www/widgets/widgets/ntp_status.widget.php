@@ -5,7 +5,7 @@
  * part of pfSense (https://www.pfsense.org)
  * Copyright (c) 2004-2013 BSD Perimeter
  * Copyright (c) 2013-2016 Electric Sheep Fencing
- * Copyright (c) 2014-2019 Rubicon Communications, LLC (Netgate)
+ * Copyright (c) 2014-2020 Rubicon Communications, LLC (Netgate)
  * All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -30,7 +30,7 @@ require_once("/usr/local/www/widgets/include/ntp_status.inc");
 // to once per 60 seconds, not once per 10 seconds
 $widgetperiod = isset($config['widgets']['period']) ? $config['widgets']['period'] * 1000 * 6 : 60000;
 
-if ($_REQUEST['updateme']) {
+if ($_REQUEST['updateme'] && is_array($config['ntpd']) && ($config['ntpd']['enable'] != 'disabled')) {
 //this block displays only on ajax refresh
 	if (isset($config['system']['ipv6allow'])) {
 		$inet_version = "";
@@ -38,7 +38,7 @@ if ($_REQUEST['updateme']) {
 		$inet_version = " -4";
 	}
 
-	exec("/usr/local/sbin/ntpq -pn -w $inet_version | /usr/bin/tail +3", $ntpq_output);
+	exec('/usr/local/sbin/ntpq -pnw ' . $inet_version . ' | /usr/bin/tail +3 | /usr/bin/awk -v RS= \'{gsub(/\n[[:space:]][[:space:]]+/," ")}1\'', $ntpq_output);
 	$ntpq_counter = 0;
 	$stratum_text = gettext("stratum");
 	foreach ($ntpq_output as $line) {
@@ -147,6 +147,7 @@ if ($_REQUEST['updateme']) {
 ?>
 
 <table id="ntp_status_widget" class="table table-striped table-hover">
+<?php if (is_array($config['ntpd']) && ($config['ntpd']['enable'] != 'disabled')): ?>
 	<tr>
 		<th><?=gettext('Server Time')?></th>
 		<td id="ClockTime">
@@ -188,6 +189,11 @@ if ($_REQUEST['updateme']) {
 			</tr>
 		<?php endif; ?>
 	<?php endif; ?>
+<?php else: ?>
+	<tr>
+		<td class="text-danger"><?=gettext('NTP Server is disabled')?></td>
+	</tr>
+<?php endif; ?>
 </table>
 
 <?php
@@ -225,9 +231,11 @@ setInterval(function() {
 <table id="ntpstatus" class="table table-striped table-hover">
 	<tbody>
 		<tr>
-			<td>
-				<?=gettext('Updating...')?>
-			</td>
+		<?php if (is_array($config['ntpd']) && ($config['ntpd']['enable'] != 'disabled')): ?>
+			<td><?=gettext('Updating...')?></td>
+		<?php else: ?>
+			<td class="text-danger"><?=gettext('NTP Server is disabled')?></td>
+		<?php endif; ?>
 		</tr>
 	</tbody>
 </table>

@@ -6,7 +6,7 @@
  * Copyright (c) 2006 Fernando Lemos
  * Copyright (c) 2006-2013 BSD Perimeter
  * Copyright (c) 2013-2016 Electric Sheep Fencing
- * Copyright (c) 2014-2019 Rubicon Communications, LLC (Netgate)
+ * Copyright (c) 2014-2020 Rubicon Communications, LLC (Netgate)
  * All rights reserved.
  *
  * This file was rewritten from scratch by Fernando Lemos but
@@ -535,7 +535,7 @@ function openvpn_remap_digest($digest) {
 
 function openvpn_get_keydirlist() {
 	$keydirs = array(
-		''  => gettext('Use default direction'),
+		'default'  => gettext('Use default direction'),
 		'0' => gettext('Direction 0'),
 		'1' => gettext('Direction 1'),
 		'2' => gettext('Both directions'),
@@ -1139,7 +1139,8 @@ function openvpn_reconfigure($mode, $settings) {
 		$conf .= "management {$g['openvpn_base']}/{$mode_id}/sock unix\n";
 
 		// The remote server
-		$conf .= "remote {$settings['server_addr']} {$settings['server_port']}\n";
+		$remoteproto = strtolower($settings['protocol']);
+		$conf .= "remote {$settings['server_addr']} {$settings['server_port']} {$remoteproto}\n";
 
 		if (!empty($settings['use_shaper'])) {
 			$conf .= "shaper {$settings['use_shaper']}\n";

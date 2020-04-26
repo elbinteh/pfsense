@@ -5,7 +5,7 @@
  * part of pfSense (https://www.pfsense.org)
  * Copyright (c) 2004-2013 BSD Perimeter
  * Copyright (c) 2013-2016 Electric Sheep Fencing
- * Copyright (c) 2014-2019 Rubicon Communications, LLC (Netgate)
+ * Copyright (c) 2014-2020 Rubicon Communications, LLC (Netgate)
  * Copyright (c) 2013 Dagorlad
  * All rights reserved.
  *
@@ -36,6 +36,9 @@ require_once("shaper.inc");
 
 global $ntp_poll_min_default, $ntp_poll_max_default;
 $ntp_poll_values = system_ntp_poll_values();
+$auto_pool_suffix = "pool.ntp.org";
+$max_candidate_peers = 25;
+$min_candidate_peers = 4;
 
 if (!is_array($config['ntpd'])) {
 	$config['ntpd'] = array();
@@ -46,7 +49,7 @@ if (empty($config['ntpd']['interface'])) {
 	    is_array($config['installedpackages']['openntpd']['config'][0]) && !empty($config['installedpackages']['openntpd']['config'][0]['interface'])) {
 		$pconfig['interface'] = explode(",", $config['installedpackages']['openntpd']['config'][0]['interface']);
 		unset($config['installedpackages']['openntpd']);
-		write_config(gettext("Upgraded settings from openttpd"));
+		write_config(gettext("Upgraded settings from openntpd"));
 	} else {
 		$pconfig['interface'] = array();
 	}
@@ -58,6 +61,11 @@ if ($_POST) {
 	unset($input_errors);
 	$pconfig = $_POST;
 
+	if (!empty($_POST['ntpmaxpeers']) && (!is_numericint($_POST['ntpmaxpeers']) ||
+	    ($_POST['ntpmaxpeers'] < $min_candidate_peers) || ($_POST['ntpmaxpeers'] > $max_candidate_peers))) {
+		$input_errors[] = sprintf(gettext("Max candidate pool peers must be a number between %d and %d"), $min_candidate_peers, $max_candidate_peers);
+	}
+	
 	if ((strlen($pconfig['ntporphan']) > 0) && (!is_numericint($pconfig['ntporphan']) || ($pconfig['ntporphan'] < 1) || ($pconfig['ntporphan'] > 15))) {
 		$input_errors[] = gettext("The supplied value for NTP Orphan Mode is invalid.");
 	}
@@ -70,6 +78,17 @@ if ($_POST) {
 		$input_errors[] = gettext("The supplied value for Maximum Poll Interval is invalid.");
 	}
 
+	for ($i = 0; $i < NUMTIMESERVERS; $i++) {
+		if (isset($pconfig["servselect{$i}"]) && (isset($pconfig["servispool{$i}"]) || 
+		    (substr_compare($pconfig["server{$i}"], $auto_pool_suffix, strlen($pconfig["server{$i}"]) - strlen($auto_pool_suffix), strlen($auto_pool_suffix)) === 0))) {
+			$input_errors[] = gettext("It is not possible to use 'No Select' for pools.");
+		}
+		if (!empty($pconfig["server{$i}"]) && !is_domain($pconfig["server{$i}"]) &&
+		    !is_ipaddr($pconfig["server{$i}"])) {
+			$input_errors[] = gettext("NTP Time Server names must be valid domain names, IPv4 addresses, or IPv6 addresses");
+		}
+	}
+
 	if (is_numericint($pconfig['ntpminpoll']) &&
 	    is_numericint($pconfig['ntpmaxpoll']) &&
 	    ($pconfig['ntpmaxpoll'] < $pconfig['ntpminpoll'])) {
@@ -77,6 +96,7 @@ if ($_POST) {
 	}
 
 	if (!$input_errors) {
+		$config['ntpd']['enable'] = isset($_POST['enable']) ? 'enabled' : 'disabled';
 		if (is_array($_POST['interface'])) {
 			$config['ntpd']['interface'] = implode(",", $_POST['interface']);
 		} elseif (isset($config['ntpd']['interface'])) {
@@ -98,13 +118,13 @@ if ($_POST) {
 			$tserver = trim($_POST["server{$i}"]);
 			if (!empty($tserver)) {
 				$timeservers .= "{$tserver} ";
-				if (!empty($_POST["servprefer{$i}"])) {
+				if (isset($_POST["servprefer{$i}"])) {
 					$config['ntpd']['prefer'] .= "{$tserver} ";
 				}
-				if (!empty($_POST["servselect{$i}"])) {
+				if (isset($_POST["servselect{$i}"])) {
 					$config['ntpd']['noselect'] .= "{$tserver} ";
 				}
-				if (!empty($_POST["servispool{$i}"])) {
+				if (isset($_POST["servispool{$i}"])) {
 					$config['ntpd']['ispool'] .= "{$tserver} ";
 				}
 			}
@@ -114,6 +134,11 @@ if ($_POST) {
 		}
 		$config['system']['timeservers'] = trim($timeservers);
 
+		if (!empty($pconfig['ntpmaxpeers'])) {
+			$config['ntpd']['ntpmaxpeers'] = $pconfig['ntpmaxpeers'];
+		} else {
+			unset($config['ntpd']['ntpmaxpeers']);
+		}
 		$config['ntpd']['orphan'] = trim($pconfig['ntporphan']);
 		$config['ntpd']['ntpminpoll'] = $pconfig['ntpminpoll'];
 		$config['ntpd']['ntpmaxpoll'] = $pconfig['ntpmaxpoll'];
@@ -184,6 +209,8 @@ function build_interface_list() {
 	$iflist = array('options' => array(), 'selected' => array());
 
 	$interfaces = get_configured_interface_with_descr();
+	$interfaces['lo0'] = "Localhost";
+
 	foreach ($interfaces as $iface => $ifacename) {
 		if (!is_ipaddr(get_interface_ip($iface)) &&
 		    !is_ipaddrv6(get_interface_ipv6($iface))) {
@@ -232,6 +259,13 @@ $form->setMultipartEncoding();	// Allow file uploads
 
 $section = new Form_Section('NTP Server Configuration');
 
+$section->addInput(new Form_Checkbox(
+	'enable',
+	'Enable',
+	'Enable NTP Server',
+	($pconfig['enable'] == 'enabled')
+))->setHelp('You may need to disable NTP if pfSense is running in a virtual machine and the host is responsible for the clock.');
+
 $iflist = build_interface_list();
 
 $section->addInput(new Form_Select(
@@ -246,7 +280,6 @@ $section->addInput(new Form_Select(
 
 $timeservers = explode(' ', $config['system']['timeservers']);
 $maxrows = max(count($timeservers), 1);
-$auto_pool_suffix = "pool.ntp.org";
 for ($counter=0; $counter < $maxrows; $counter++) {
 	$group = new Form_Group($counter == 0 ? 'Time Servers':'');
 	$group->addClass('repeatable');
@@ -318,6 +351,18 @@ $section->addInput(new Form_StaticText(
 	);
 
 $section->addInput(new Form_Input(
+	'ntpmaxpeers',
+	'Max candidate pool peers',
+	'number',
+	$pconfig['ntpmaxpeers'],
+	['min' => $min_candidate_peers, 'max' => $max_candidate_peers]
+))->setHelp('Maximum number of candidate peers in the NTP pool. This value should be set low enough to provide sufficient alternate sources ' .
+	    'while not contacting an excessively large number of peers. ' .
+	    'Many servers inside public pools are provided by volunteers, ' .
+	    'and a large candidate pool places unnecessary extra load ' .
+	    'on the volunteer time servers for little to no added benefit. (Default: 5).');
+
+$section->addInput(new Form_Input(
 	'ntporphan',
 	'Orphan Mode',
 	'text',
@@ -331,14 +376,14 @@ $section->addInput(new Form_Select(
 	'ntpminpoll',
 	'Minimum Poll Interval',
 	$pconfig['ntpminpoll'],
-	$ntp_poll_values,
+	$ntp_poll_values
 ))->setHelp('Minimum poll interval for NTP messages. If set, must be less than or equal to Maximum Poll Interval.');
 
 $section->addInput(new Form_Select(
 	'ntpmaxpoll',
 	'Maximum Poll Interval',
 	$pconfig['ntpmaxpoll'],
-	$ntp_poll_values,
+	$ntp_poll_values
 ))->setHelp('Maximum poll interval for NTP messages. If set, must be greater than or equal to Minimum Poll Interval.');
 
 $section->addInput(new Form_Checkbox(

@@ -5,7 +5,7 @@
  * part of pfSense (https://www.pfsense.org)
  * Copyright (c) 2004-2013 BSD Perimeter
  * Copyright (c) 2013-2016 Electric Sheep Fencing
- * Copyright (c) 2014-2019 Rubicon Communications, LLC (Netgate)
+ * Copyright (c) 2014-2020 Rubicon Communications, LLC (Netgate)
  * Copyright (c) 2003-2005 Bob Zoller (bob@kludgebox.com)
  * All rights reserved.
  *
@@ -67,6 +67,9 @@ if ($_POST || $_REQUEST['host']) {
 	}
 	if (($ipproto == "ipv6") && is_ipaddrv4($host)) {
 		$input_errors[] = gettext("When using IPv6, the target host must be an IPv6 address or hostname.");
+	}
+	if (!is_ipaddr($host) && !is_hostname($host)) {
+		$input_errors[] = gettext("Hostname must be a valid hostname or IP address.");
 	}
 
 	if (!$input_errors) {
@@ -185,7 +188,7 @@ if ($do_ping && !empty($result) && !$input_errors) {
 		</div>
 
 		<div class="panel-body">
-			<pre><?= $result ?></pre>
+			<pre><?= htmlspecialchars($result) ?></pre>
 		</div>
 	</div>
 <?php

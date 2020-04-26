@@ -5,7 +5,7 @@
  * part of pfSense (https://www.pfsense.org)
  * Copyright (c) 2004-2013 BSD Perimeter
  * Copyright (c) 2013-2016 Electric Sheep Fencing
- * Copyright (c) 2014-2019 Rubicon Communications, LLC (Netgate)
+ * Copyright (c) 2014-2020 Rubicon Communications, LLC (Netgate)
  * All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -60,7 +60,7 @@ function updatecopyright() {
 				// Save to a temporary file
 				file_put_contents($tmpfile, $response);
 				// If the file contents are not the same as the existing file, create the trigger to display the new copyright
-				if (!file_exists($copyrightfile) || (md5_file($copyrightfile) != md5_file($tmpfile))) {
+				if (!file_exists($copyrightfile) || !compare_copytext(file_get_contents($copyrightfile), $response)) {
 					touch("{$g['cf_conf_path']}/copynotice_display");
 				}
 
@@ -70,8 +70,24 @@ function updatecopyright() {
 	}
 }
 
-// Retrieve the copyright data from Netgate.com if the support data file does not exist,
-// or if it is more than a day old
-if (!file_exists($copyrightfile) || ( time()-filemtime($copyrightfile) > $refreshinterval)) {
+// Retrieve the copyright data from Netgate.com if
+// the support data file does not exist, or
+// if it is more than a day old and the URL seems resolvable
+if (!file_exists($copyrightfile) ||
+    ((time()-filemtime($copyrightfile) > $refreshinterval) && is_url_hostname_resolvable($FQDN))) {
 	updateCopyright();
+}
+
+// Compare the copyright text contained in the first HTML <DIV>
+function compare_copytext ($new, $old) {
+	if ((strlen($new) > 0) && (strlen($old) > 0)) {
+		$new_divend = strpos($new, "</div>");
+		$old_divend = strpos($old, "</div>");
+
+		if ($new_divend && $old_divend) {
+			return(md5(substr($new, 0, $new_divend)) === md5(substr($old, 0, $old_divend)));
+		}
+	}
+
+	return false;
 }

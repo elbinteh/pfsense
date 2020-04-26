@@ -5,7 +5,7 @@
  * part of pfSense (https://www.pfsense.org)
  * Copyright (c) 2008-2013 BSD Perimeter
  * Copyright (c) 2013-2016 Electric Sheep Fencing
- * Copyright (c) 2014-2019 Rubicon Communications, LLC (Netgate)
+ * Copyright (c) 2014-2020 Rubicon Communications, LLC (Netgate)
  * Copyright (c) 2008 Shrew Soft Inc. All rights reserved.
  * All rights reserved.
  *
@@ -1516,11 +1516,12 @@ function is_cert_locally_renewable($cert) {
  */
 global $cert_strict_values;
 $cert_strict_values = array(
-	'max_server_cert_lifetime' => 825,
+	'max_server_cert_lifetime' => 398,
 	'digest_blacklist' => array('md4', 'RSA-MD4',  'md5', 'RSA-MD5', 'md5-sha1',
 					'mdc2', 'RSA-MDC2', 'sha1', 'RSA-SHA1',
 					'RSA-SHA1-2'),
 	'min_private_key_bits' => 2048,
+	'ec_curve' => 'prime256v1',
 );
 
 /****f* certs/cert_renew
@@ -1543,7 +1544,7 @@ $cert_strict_values = array(
  ******/
 
 function cert_renew(& $cert, $reusekey = true, $strictsecurity = false) {
-	global $cert_strict_values;
+	global $cert_strict_values, $cert_curve_compatible;
 
 	/* If there is no certificate or private key string, this entry is either
 	 *  invalid or cannot be renewed by this function. */
@@ -1615,7 +1616,7 @@ function cert_renew(& $cert, $reusekey = true, $strictsecurity = false) {
 	}
 
 	/* Reuse SAN list, or, if empty, add CN as SAN. */
-	$sans = $cert_details['extensions']['subjectAltName'];
+	$sans = str_replace("IP Address", "IP", $cert_details['extensions']['subjectAltName']);
 	if (empty($sans)) {
 		$sans = cert_add_altname_type($dn['commonName']);
 	}
@@ -1632,15 +1633,6 @@ function cert_renew(& $cert, $reusekey = true, $strictsecurity = false) {
 		$digest_alg = 'sha256';
 	}
 
-	/* If we are enforcing strict security, then ensure the private key size
-	 * is at least 2048 bits. */
-	$private_key_bits = $key_details['bits'];
-	if ($strictsecurity &&
-	    ($private_key_bits < $cert_strict_values['min_private_key_bits'])) {
-		$private_key_bits = $cert_strict_values['min_private_key_bits'];
-		$reusekey = false;
-	}
-
 	/* Validate key type, assume RSA if it cannot be read. */
 	if (is_array($key_details) && array_key_exists('type', $key_details)) {
 		$private_key_type = $key_details['type'];
@@ -1652,13 +1644,29 @@ function cert_renew(& $cert, $reusekey = true, $strictsecurity = false) {
 	$args = array(
 		"x509_extensions" => $cert_type,
 		"digest_alg" => $digest_alg,
-		"private_key_bits" => (int)$private_key_bits,
 		"private_key_type" => $private_key_type,
 		"encrypt_key" => false);
 
-	/* Adjust argumnents to account for ECDSA keys. */
-	if (($key_details['type'] ==  OPENSSL_KEYTYPE_EC) &&
-	    (!empty($key_details['ec']['curve_name']))) {
+	/* If we are enforcing strict security, then ensure the private key size
+	 * is at least 2048 bits or NIST P-256 elliptic curve*/
+	$private_key_bits = $key_details['bits'];
+	if ($strictsecurity) {
+		if (($key_details['type'] == OPENSSL_KEYTYPE_RSA) &&
+		    ($private_key_bits < $cert_strict_values['min_private_key_bits'])) {
+			$private_key_bits = $cert_strict_values['min_private_key_bits'];
+			$reusekey = false;
+		} else if (!in_array($key_details['ec']['curve_name'], $curve_compatible_list)) {
+			$ec_curve = $cert_strict_values['ec_curve'];
+			$reusekey = false;
+		}
+	}
+
+	/* Set key parameters. */
+	if ($key_details['type'] ==  OPENSSL_KEYTYPE_RSA) {
+		$args['private_key_bits'] = (int)$private_key_bits;
+	} else if ($ec_curve) {
+		$args['curve_name'] = $ec_curve;
+	} else {
 		$args['curve_name'] = $key_details['ec']['curve_name'];
 	}
 
@@ -1896,6 +1904,7 @@ function ca_get_all_services($refid) {
  ******/
 
 function cert_restart_services($services) {
+	require_once("service-utils.inc");
 	/* If the input is not an array, it is invalid. */
 	if (!is_array($services)) {
 		return false;
@@ -2404,7 +2413,7 @@ function cert_get_pkey_curve($pkey, $decode = true) {
 
 /* Array containing ECDSA curve names allowed in certain contexts. For instance,
  * HTTPS servers and web browsers only support specific curves in TLSv1.3. */
-global $cert_curve_compatible;
+global $cert_curve_compatible, $curve_compatible_list;
 $cert_curve_compatible = array(
 	/* HTTPS list per TLSv1.3 spec and Mozilla compatibility list */
 	'HTTPS' => array('prime256v1', 'secp384r1'),
@@ -2413,6 +2422,7 @@ $cert_curve_compatible = array(
 	/* OpenVPN bug limits usable curves, see https://redmine.pfsense.org/issues/9744 */
 	'OpenVPN' => array('prime256v1', 'secp384r1', 'secp521r1'),
 );
+$curve_compatible_list = array_unique(call_user_func_array('array_merge', $cert_curve_compatible));
 
 /****f* certs/cert_build_curve_list
  * NAME
@@ -2517,7 +2527,9 @@ function cert_build_list($type = 'cert', $consumer = '', $selectsource = false, 
 	/* Create a hashed array with the certificate refid as the key and
 	 * descriptive name as the value. Exclude incompatible certificates. */
 	foreach ($config[$type] as $cert) {
-		if (cert_check_pkey_compatibility($cert['prv'], $consumer)) {
+		if (empty($cert['prv']) && ($type == 'cert')) {
+			continue;
+		} else if (cert_check_pkey_compatibility($cert['prv'], $consumer)) {
 			if ($selectsource) {
 				$list[] = array('refid' => $cert['refid'],
 						'descr' => $cert['descr']);

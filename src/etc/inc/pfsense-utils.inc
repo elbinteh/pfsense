@@ -5,7 +5,7 @@
  * part of pfSense (https://www.pfsense.org)
  * Copyright (c) 2004-2013 BSD Perimeter
  * Copyright (c) 2013-2016 Electric Sheep Fencing
- * Copyright (c) 2014-2019 Rubicon Communications, LLC (Netgate)
+ * Copyright (c) 2014-2020 Rubicon Communications, LLC (Netgate)
  * All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -1867,27 +1867,53 @@ function get_uptime_sec() {
 	return $uptime;
 }
 
+function resolve_host_addresses($host, $recordtypes = array(DNS_A, DNS_AAAA, DNS_CNAME), $index = true) {
+	$dnsresult = array();
+	$resolved = array();
+	$errreporting = error_reporting();
+	error_reporting($errreporting & ~E_WARNING);// dns_get_record throws a warning if nothing is resolved..
+	foreach ($recordtypes as $recordtype) {
+		$tmp = dns_get_record($host, $recordtype);
+		if (is_array($tmp)) {
+			$dnsresult = array_merge($dnsresult, $tmp);
+		}
+	}
+	error_reporting($errreporting);// restore original php warning/error settings.
+	foreach ($dnsresult as $item) {
+		$newitem = array();
+		$newitem['type'] = $item['type'];
+		switch ($item['type']) {
+			case 'CNAME':
+				$newitem['data'] = $item['target'];
+				$resolved[] = $newitem;
+				break;
+			case 'A':
+				$newitem['data'] = $item['ip'];
+				$resolved[] = $newitem;
+				break;
+			case 'AAAA':
+				$newitem['data'] = $item['ipv6'];
+				$resolved[] = $newitem;
+				break;
+		}
+	}
+	if ($index == false) {
+		foreach ($resolved as $res) {
+			$noind[] = $res['data'];
+		}
+		$resolved = $noind;
+	}
+	return $resolved;
+}
+
 function add_hostname_to_watch($hostname) {
 	if (!is_dir("/var/db/dnscache")) {
 		mkdir("/var/db/dnscache");
 	}
 	$result = array();
 	if ((is_fqdn($hostname)) && (!is_ipaddr($hostname))) {
-		$domrecords = array();
-		$domips = array();
-		exec("/usr/bin/host -t A " . escapeshellarg($hostname), $domrecords, $rethost);
-		if ($rethost == 0) {
-			foreach ($domrecords as $domr) {
-				$doml = explode(" ", $domr);
-				$domip = $doml[3];
-				/* fill array with domain ip addresses */
-				if (is_ipaddr($domip)) {
-					$domips[] = $domip;
-				}
-			}
-		}
-		sort($domips);
 		$contents = "";
+		$domips = resolve_host_addresses($hostname, array(DNS_A), false);
 		if (!empty($domips)) {
 			foreach ($domips as $ip) {
 				$contents .= "$ip\n";
@@ -1937,21 +1963,8 @@ function compare_hostname_to_dnscache($hostname) {
 		$oldcontents = "";
 	}
 	if ((is_fqdn($hostname)) && (!is_ipaddr($hostname))) {
-		$domrecords = array();
-		$domips = array();
-		exec("/usr/bin/host -t A " . escapeshellarg($hostname), $domrecords, $rethost);
-		if ($rethost == 0) {
-			foreach ($domrecords as $domr) {
-				$doml = explode(" ", $domr);
-				$domip = $doml[3];
-				/* fill array with domain ip addresses */
-				if (is_ipaddr($domip)) {
-					$domips[] = $domip;
-				}
-			}
-		}
-		sort($domips);
 		$contents = "";
+		$domips = resolve_host_addresses($hostname, array(DNS_A), false);
 		if (!empty($domips)) {
 			foreach ($domips as $ip) {
 				$contents .= "$ip\n";
@@ -2370,7 +2383,7 @@ function parse_aliases_file($filename, $type = "url", $max_items = -1, $kflc = f
 	$comments = array();
 	/* NOTE: fgetss() is not a typo RTFM before being smart */
 	while (($fc = fgetss($fd)) !== FALSE) {
-		$tmp = trim($fc, " \t\n\r");
+		$tmp = idn_to_ascii(trim($fc, " \t\n\r"));
 		if (empty($tmp)) {
 			continue;
 		}
@@ -2385,13 +2398,36 @@ function parse_aliases_file($filename, $type = "url", $max_items = -1, $kflc = f
 			if (!empty($tmp_str)) {
 				$tmp = $tmp_str;
 			}
-			$valid = (($type == "url" || $type == "urltable") && (is_ipaddr($tmp) || is_subnet($tmp))) ||
-				(($type == "url_ports" || $type == "urltable_ports") && is_port_or_range($tmp));
-			if ($valid) {
-				$items[] = $tmp;
-				if (count($items) == $max_items) {
+			switch ($type) {
+				case "url":
+				case "urltable":
+					if (is_ipaddr($tmp) || is_subnet($tmp)) {
+						$items[] = $tmp;
+						break;
+					}
+					if (is_fqdn($tmp)) {
+						$results = resolve_host_addresses($tmp, array(DNS_A, DNS_AAAA), false);
+						if (!empty($results)) {
+							foreach ($results as $ip) {
+								if (is_ipaddr($ip)) {
+									$items[] = $ip;
+								}
+							}
+						}
+					}
+					break;
+				case "url_ports":
+				case "urltable_ports":
+					if (is_port_or_range($tmp)) {
+						$items[] = $tmp;
+					}
+					break;
+				default:
+					/* unknown type */
 					break;
 				}
+			if (count($items) == $max_items) {
+				break;
 			}
 		}
 	}
@@ -2619,7 +2655,7 @@ function process_alias_urltable($name, $type, $url, $freq, $forceupdate=false, $
 
 			/* Remove existing archive and create an up to date archive if RAM disk is enabled. */
 			unlink_if_exists("{$g['cf_conf_path']}/RAM_Disk_Store/{$name}.txt.tgz");
-			if (isset($config['system']['use_mfs_tmpvar'])) {
+			if (isset($config['system']['use_mfs_tmpvar']) && !file_exists("/conf/ram_disks_failed")) {
 				mwexec("/usr/bin/tar -czf " . escapeshellarg("{$g['cf_conf_path']}/RAM_Disk_Store/{$name}.txt.tgz") . " -C / " . escapeshellarg($urltable_filename));
 			}
 
@@ -3524,6 +3560,45 @@ function send_user_download($type = 'data', $content, $userfilename = "", $conte
 	/* Flush any remaining output buffer */
 	@ob_end_flush();
 	exit;
+}
+
+// Test whether the hostname in a URL can be resolved with a very short timeout
+function is_url_hostname_resolvable($url) {
+	$urlhostname = parse_url($url, PHP_URL_HOST);
+	if (empty($urlhostname)) {
+		return false;
+	}
+	putenv("RES_OPTIONS=timeout:3 attempts:1");
+	$resolvable = ($urlhostname !== gethostbyname($urlhostname));
+	putenv("RES_OPTIONS");
+	return $resolvable;
+}
+
+function get_pf_timeouts () {
+	$pftimeout = array();
+	exec("/sbin/pfctl -st", $pfctlst, $retval);
+	if ($retval == 0) {
+		foreach ($pfctlst as $i => $pfst) {
+			preg_match('/([a-z]+)\.([a-z]+)\s+([0-9]+)/', $pfst, $timeout);
+			if ($timeout[1] == "other") {
+				$proto = "Other";
+			} else {
+				$proto = strtoupper($timeout[1]);
+			}
+			if ($timeout[2] == "finwait") {
+				$type = "FIN Wait";
+			} else {
+				$type = ucfirst($timeout[2]);
+			}
+			$pftimeout[$proto][$type]['name'] = $proto . " " . $type;
+			$pftimeout[$proto][$type]['keyname'] = $timeout[1] . $timeout[2] . "timeout";
+			$pftimeout[$proto][$type]['value'] = $timeout[3];
+			if ($i == 14) {
+				break;
+			}
+		}
+	}
+	return $pftimeout;
 }
 
 ?>

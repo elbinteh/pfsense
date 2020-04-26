@@ -5,7 +5,7 @@
  * part of pfSense (https://www.pfsense.org)
  * Copyright (c) 2004-2013 BSD Perimeter
  * Copyright (c) 2013-2016 Electric Sheep Fencing
- * Copyright (c) 2014-2019 Rubicon Communications, LLC (Netgate)
+ * Copyright (c) 2014-2020 Rubicon Communications, LLC (Netgate)
  * Copyright (c) 2008 Shrew Soft Inc
  * All rights reserved.
  *
@@ -161,6 +161,7 @@ if ($act == "edit") {
 			$pconfig['ldap_attr_groupobj'] = $a_server[$id]['ldap_attr_groupobj'];
 			$pconfig['ldap_utf8'] = isset($a_server[$id]['ldap_utf8']);
 			$pconfig['ldap_nostrip_at'] = isset($a_server[$id]['ldap_nostrip_at']);
+			$pconfig['ldap_allow_unauthenticated'] = isset($a_server[$id]['ldap_allow_unauthenticated']);
 			$pconfig['ldap_rfc2307'] = isset($a_server[$id]['ldap_rfc2307']);
 
 			if (!$pconfig['ldap_binddn'] || !$pconfig['ldap_bindpw']) {
@@ -335,6 +336,11 @@ if ($_POST['save']) {
 				$server['ldap_nostrip_at'] = true;
 			} else {
 				unset($server['ldap_nostrip_at']);
+			}
+			if ($pconfig['ldap_allow_unauthenticated'] == "yes") {
+				$server['ldap_allow_unauthenticated'] = true;
+			} else {
+				unset($server['ldap_allow_unauthenticated']);
 			}
 			if ($pconfig['ldap_rfc2307'] == "yes") {
 				$server['ldap_rfc2307'] = true;
@@ -556,8 +562,8 @@ $section->addInput(new Form_Input(
 	'*Hostname or IP address',
 	'text',
 	$pconfig['ldap_host']
-))->setHelp('NOTE: When using SSL or STARTTLS, this hostname MUST match the Common Name '.
-	'(CN) of the LDAP server\'s SSL Certificate.');
+))->setHelp('NOTE: When using SSL/TLS or STARTTLS, this hostname MUST match a Subject '.
+	'Alternative Name (SAN) or the Common Name (CN) of the LDAP server SSL/TLS Certificate.');
 
 $section->addInput(new Form_Input(
 	'ldap_port',
@@ -591,9 +597,9 @@ else
 		'Peer Certificate Authority',
 		$pconfig['ldap_caref'],
 		$ldapCaRef
-	))->setHelp('This option is used if \'SSL Encrypted\' '.
-		'or \'TCP - STARTTLS\' options are chosen. '.
-		'It must match with the CA in the AD otherwise problems will arise.');
+	))->setHelp('This CA is used to validate the LDAP server certificate when '.
+		'\'SSL/TLS Encrypted\' or \'STARTTLS Encrypted\' Transport is active. '.
+		'This CA must match the CA used by the LDAP server.');
 }
 
 $section->addInput(new Form_Select(
@@ -764,6 +770,14 @@ $section->addInput(new Form_Checkbox(
 	'Do not strip away parts of the username after the @ symbol',
 	$pconfig['ldap_nostrip_at']
 ))->setHelp('e.g. user@host becomes user when unchecked.');
+
+$section->addInput(new Form_Checkbox(
+	'ldap_allow_unauthenticated',
+	'Allow unauthenticated bind',
+	'Allow unauthenticated bind',
+	$pconfig['ldap_allow_unauthenticated']
+))->setHelp('Unauthenticated binds are bind with an existing login but with an empty password. '.
+         'Some LDAP servers (Microsoft AD) allow this type of bind without any possiblity to disable it.');
 
 $form->add($section);
 
@@ -980,6 +994,7 @@ events.push(function() {
 				$('#ldap_attr_user').val("<?=$tmpldata['attr_user'];?>");
 				$('#ldap_attr_group').val("<?=$tmpldata['attr_group'];?>");
 				$('#ldap_attr_member').val("<?=$tmpldata['attr_member'];?>");
+				$("#ldap_allow_unauthenticated").attr("checked", <?=$tmpldata['allow_unauthenticated'];?>);
 				break;
 <?php
 			$index++;

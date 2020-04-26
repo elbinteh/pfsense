@@ -5,7 +5,7 @@
 # part of pfSense (https://www.pfsense.org)
 # Copyright (c) 2004-2013 BSD Perimeter
 # Copyright (c) 2013-2016 Electric Sheep Fencing
-# Copyright (c) 2014-2019 Rubicon Communications, LLC (Netgate)
+# Copyright (c) 2014-2020 Rubicon Communications, LLC (Netgate)
 # All rights reserved.
 #
 # FreeSBIE portions of the code
@@ -1390,12 +1390,12 @@ pkg_repo_rsync() {
 
 	for _pkg_rsync_hostname in ${PKG_RSYNC_HOSTNAME}; do
 		# Make sure destination directory exist
-		ssh -p ${PKG_RSYNC_SSH_PORT} \
+		ssh -o StrictHostKeyChecking=no -p ${PKG_RSYNC_SSH_PORT} \
 			${PKG_RSYNC_USERNAME}@${_pkg_rsync_hostname} \
 			"mkdir -p ${PKG_RSYNC_DESTDIR}"
 
 		echo -n ">>> Sending updated repository to ${_pkg_rsync_hostname}... " | tee -a ${_logfile}
-		if script -aq ${_logfile} rsync -Have "ssh -p ${PKG_RSYNC_SSH_PORT}" \
+		if script -aq ${_logfile} rsync -Have "ssh -o StrictHostKeyChecking=no -p ${PKG_RSYNC_SSH_PORT}" \
 			--timeout=60 --delete-delay ${_repo_path} \
 			${PKG_RSYNC_USERNAME}@${_pkg_rsync_hostname}:${PKG_RSYNC_DESTDIR} >/dev/null 2>&1
 		then
@@ -1413,14 +1413,14 @@ pkg_repo_rsync() {
 		if [ -n "${_IS_RELEASE}" -o "${_repo_path_param}" = "${CORE_PKG_PATH}" ]; then
 			for _pkg_final_rsync_hostname in ${PKG_FINAL_RSYNC_HOSTNAME}; do
 				# Send .real* directories first to prevent having a broken repo while transfer happens
-				local _cmd="rsync -Have \"ssh -p ${PKG_FINAL_RSYNC_SSH_PORT}\" \
+				local _cmd="rsync -Have \"ssh -o StrictHostKeyChecking=no -p ${PKG_FINAL_RSYNC_SSH_PORT}\" \
 					--timeout=60 ${PKG_RSYNC_DESTDIR}/./${_repo_base%%-core}* \
 					--include=\"/*\" --include=\"*/.real*\" --include=\"*/.real*/***\" \
 					--exclude=\"*\" \
 					${PKG_FINAL_RSYNC_USERNAME}@${_pkg_final_rsync_hostname}:${PKG_FINAL_RSYNC_DESTDIR}"
 
 				echo -n ">>> Sending updated packages to ${_pkg_final_rsync_hostname}... " | tee -a ${_logfile}
-				if script -aq ${_logfile} ssh -p ${PKG_RSYNC_SSH_PORT} \
+				if script -aq ${_logfile} ssh -o StrictHostKeyChecking=no -p ${PKG_RSYNC_SSH_PORT} \
 					${PKG_RSYNC_USERNAME}@${_pkg_rsync_hostname} ${_cmd} >/dev/null 2>&1; then
 					echo "Done!" | tee -a ${_logfile}
 				else
@@ -1429,12 +1429,12 @@ pkg_repo_rsync() {
 					print_error_pfS
 				fi
 
-				_cmd="rsync -Have \"ssh -p ${PKG_FINAL_RSYNC_SSH_PORT}\" \
+				_cmd="rsync -Have \"ssh -o StrictHostKeyChecking=no -p ${PKG_FINAL_RSYNC_SSH_PORT}\" \
 					--timeout=60 --delete-delay ${PKG_RSYNC_DESTDIR}/./${_repo_base%%-core}* \
 					${PKG_FINAL_RSYNC_USERNAME}@${_pkg_final_rsync_hostname}:${PKG_FINAL_RSYNC_DESTDIR}"
 
 				echo -n ">>> Sending updated repositories metadata to ${_pkg_final_rsync_hostname}... " | tee -a ${_logfile}
-				if script -aq ${_logfile} ssh -p ${PKG_RSYNC_SSH_PORT} \
+				if script -aq ${_logfile} ssh -o StrictHostKeyChecking=no -p ${PKG_RSYNC_SSH_PORT} \
 					${PKG_RSYNC_USERNAME}@${_pkg_rsync_hostname} ${_cmd} >/dev/null 2>&1; then
 					echo "Done!" | tee -a ${_logfile}
 				else
@@ -1447,12 +1447,12 @@ pkg_repo_rsync() {
 					continue
 				fi
 
-				local _repos=$(ssh -p ${PKG_FINAL_RSYNC_SSH_PORT} \
+				local _repos=$(ssh -o StrictHostKeyChecking=no -p ${PKG_FINAL_RSYNC_SSH_PORT} \
 				    ${PKG_FINAL_RSYNC_USERNAME}@${_pkg_final_rsync_hostname} \
 				    "ls -1d ${PKG_FINAL_RSYNC_DESTDIR}/${_repo_base%%-core}*")
 				for _repo in ${_repos}; do
 					echo -n ">>> Sending updated packages to AWS ${PKG_FINAL_S3_PATH}... " | tee -a ${_logfile}
-					if script -aq ${_logfile} ssh -p ${PKG_FINAL_RSYNC_SSH_PORT} \
+					if script -aq ${_logfile} ssh -o StrictHostKeyChecking=no -p ${PKG_FINAL_RSYNC_SSH_PORT} \
 					    ${PKG_FINAL_RSYNC_USERNAME}@${_pkg_final_rsync_hostname} \
 					    "${_aws_sync_cmd} ${_repo} ${PKG_FINAL_S3_PATH}/$(basename ${_repo})"; then
 						echo "Done!" | tee -a ${_logfile}
@@ -1462,7 +1462,7 @@ pkg_repo_rsync() {
 						print_error_pfS
 					fi
 					echo -n ">>> Cleaning up packages at AWS ${PKG_FINAL_S3_PATH}... " | tee -a ${_logfile}
-					if script -aq ${_logfile} ssh -p ${PKG_FINAL_RSYNC_SSH_PORT} \
+					if script -aq ${_logfile} ssh -o StrictHostKeyChecking=no -p ${PKG_FINAL_RSYNC_SSH_PORT} \
 					    ${PKG_FINAL_RSYNC_USERNAME}@${_pkg_final_rsync_hostname} \
 					    "${_aws_sync_cmd} --delete ${_repo} ${PKG_FINAL_S3_PATH}/$(basename ${_repo})"; then
 						echo "Done!" | tee -a ${_logfile}
@@ -1541,6 +1541,7 @@ poudriere_rename_ports() {
 		local _pdir=$(dirname ${d})
 		local _pname=$(echo $(basename ${d}) | sed "s,pfSense,${PRODUCT_NAME},")
 		local _plist=""
+		local _pdescr=""
 
 		if [ -e ${_pdir}/${_pname} ]; then
 			rm -rf ${_pdir}/${_pname}
@@ -1552,11 +1553,14 @@ poudriere_rename_ports() {
 			_plist=${_pdir}/${_pname}/pkg-plist
 		fi
 
+		if [ -f ${_pdir}/${_pname}/pkg-descr ]; then
+			_pdescr=${_pdir}/${_pname}/pkg-descr
+		fi
+
 		sed -i '' -e "s,pfSense,${PRODUCT_NAME},g" \
 			  -e "s,https://www.pfsense.org,${PRODUCT_URL},g" \
 			  -e "/^MAINTAINER=/ s,^.*$,MAINTAINER=	${PRODUCT_EMAIL}," \
-			${_pdir}/${_pname}/Makefile \
-			${_pdir}/${_pname}/pkg-descr ${_plist}
+			${_pdir}/${_pname}/Makefile ${_pdescr} ${_plist}
 
 		# PHP module is special
 		if echo "${_pname}" | grep -q "^php[0-9]*-${PRODUCT_NAME}-module"; then
@@ -1564,19 +1568,21 @@ poudriere_rename_ports() {
 			sed -i '' -e "s,PHP_PFSENSE,PHP_${_product_capital},g" \
 				  -e "s,PFSENSE_SHARED_LIBADD,${_product_capital}_SHARED_LIBADD,g" \
 				  -e "s,pfSense,${PRODUCT_NAME},g" \
-				  -e "s,${PRODUCT_NAME}\.c,pfSense.c,g" \
+				  -e "s,pfSense.c,${PRODUCT_NAME}\.c,g" \
 				${_pdir}/${_pname}/files/config.m4
 
 			sed -i '' -e "s,COMPILE_DL_PFSENSE,COMPILE_DL_${_product_capital}," \
 				  -e "s,pfSense_module_entry,${PRODUCT_NAME}_module_entry,g" \
+				  -e "s,php_pfSense.h,php_${PRODUCT_NAME}\.h,g" \
 				  -e "/ZEND_GET_MODULE/ s,pfSense,${PRODUCT_NAME}," \
 				  -e "/PHP_PFSENSE_WORLD_EXTNAME/ s,pfSense,${PRODUCT_NAME}," \
 				${_pdir}/${_pname}/files/pfSense.c \
+				${_pdir}/${_pname}/files/dummynet.c \
 				${_pdir}/${_pname}/files/php_pfSense.h
 		fi
 
 		if [ -d ${_pdir}/${_pname}/files ]; then
-			for fd in $(find ${_pdir}/${_pname}/files -type d -name '*pfSense*'); do
+			for fd in $(find ${_pdir}/${_pname}/files -name '*pfSense*'); do
 				local _fddir=$(dirname ${fd})
 				local _fdname=$(echo $(basename ${fd}) | sed "s,pfSense,${PRODUCT_NAME},")
 
@@ -1668,6 +1674,11 @@ poudriere_init() {
 		echo ">>> ERROR: POUDRIERE_PORTS_GIT_URL is not defined"
 		print_error_pfS
 	fi
+
+	# PARALLEL_JOBS us ncpu / 4 for best performance
+	local _parallel_jobs=$(sysctl -qn hw.ncpu)
+	_parallel_jobs=$((_parallel_jobs / 4))
+
 	echo ">>> Creating poudriere.conf" | tee -a ${LOGFILE}
 	cat <<EOF >/usr/local/etc/poudriere.conf
 ZPOOL=${ZFS_TANK}
@@ -1685,7 +1696,7 @@ COMMIT_PACKAGES_ON_FAILURE=no
 KEEP_OLD_PACKAGES=yes
 KEEP_OLD_PACKAGES_COUNT=5
 ALLOW_MAKE_JOBS=yes
-PARALLEL_JOBS=8
+PARALLEL_JOBS=${_parallel_jobs}
 EOF
 
 	if pkg info -e ccache; then
@@ -1709,7 +1720,7 @@ EOF
 
 		if poudriere jail -i -j "${jail_name}" >/dev/null 2>&1; then
 			echo ">>> Poudriere jail ${jail_name} already exists, deleting it..." | tee -a ${LOGFILE}
-			poudriere jail -d -j "${jail_name}" >/dev/null 2>&1
+			poudriere jail -d -j "${jail_name}"
 		fi
 	done
 
@@ -1799,6 +1810,11 @@ poudriere_update_ports() {
 poudriere_bulk() {
 	local _archs=$(poudriere_possible_archs)
 	local _makeconf
+
+	# Create DISTFILES_CACHE if it doesn't exist
+	if [ ! -d /usr/ports/distfiles ]; then
+		mkdir -p /usr/ports/distfiles
+	fi
 
 	LOGFILE=${BUILDER_LOGS}/poudriere.log
 
@@ -1978,7 +1994,7 @@ snapshots_create_sha256() {
 
 snapshots_scp_files() {
 	if [ -z "${RSYNC_COPY_ARGUMENTS}" ]; then
-		RSYNC_COPY_ARGUMENTS="-ave ssh --timeout=60"
+		RSYNC_COPY_ARGUMENTS="-Have \"ssh -o StrictHostKeyChecking=no\" --timeout=60"
 	fi
 
 	snapshots_update_status ">>> Copying core pkg repo to ${PKG_RSYNC_HOSTNAME}"
@@ -1989,12 +2005,12 @@ snapshots_scp_files() {
 		snapshots_update_status ">>> Copying files to ${_rsyncip}"
 
 		# Ensure directory(s) are available
-		ssh ${RSYNCUSER}@${_rsyncip} "mkdir -p ${RSYNCPATH}/installer"
+		ssh -o StrictHostKeyChecking=no ${RSYNCUSER}@${_rsyncip} "mkdir -p ${RSYNCPATH}/installer"
 		if [ -d $IMAGES_FINAL_DIR/virtualization ]; then
-			ssh ${RSYNCUSER}@${_rsyncip} "mkdir -p ${RSYNCPATH}/virtualization"
+			ssh -o StrictHostKeyChecking=no ${RSYNCUSER}@${_rsyncip} "mkdir -p ${RSYNCPATH}/virtualization"
 		fi
 		# ensure permissions are correct for r+w
-		ssh ${RSYNCUSER}@${_rsyncip} "chmod -R ug+rw ${RSYNCPATH}/."
+		ssh -o StrictHostKeyChecking=no ${RSYNCUSER}@${_rsyncip} "chmod -R ug+rw ${RSYNCPATH}/."
 		rsync $RSYNC_COPY_ARGUMENTS $IMAGES_FINAL_DIR/installer/* \
 			${RSYNCUSER}@${_rsyncip}:${RSYNCPATH}/installer/
 		if [ -d $IMAGES_FINAL_DIR/virtualization ]; then

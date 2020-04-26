@@ -5,7 +5,7 @@
  * part of pfSense (https://www.pfsense.org)
  * Copyright (c) 2004-2013 BSD Perimeter
  * Copyright (c) 2013-2016 Electric Sheep Fencing
- * Copyright (c) 2014-2019 Rubicon Communications, LLC (Netgate)
+ * Copyright (c) 2014-2020 Rubicon Communications, LLC (Netgate)
  * All rights reserved.
  *
  * originally based on m0n0wall (http://m0n0.ch/wall)
@@ -163,11 +163,18 @@ if (is_array($dhcpdconf)) {
 	list($pconfig['wins1'], $pconfig['wins2']) = $dhcpdconf['winsserver'];
 	list($pconfig['dns1'], $pconfig['dns2'], $pconfig['dns3'], $pconfig['dns4']) = $dhcpdconf['dnsserver'];
 	$pconfig['ignorebootp'] = isset($dhcpdconf['ignorebootp']);
-	$pconfig['denyunknown'] = isset($dhcpdconf['denyunknown']);
+
+	if (isset($dhcpdconf['denyunknown'])) {
+		$pconfig['denyunknown'] = empty($dhcpdconf['denyunknown']) ? "enabled" : $dhcpdconf['denyunknown'];
+	} else {
+		$pconfig['denyunknown'] = "disabled";
+	}
+
 	$pconfig['ignoreclientuids'] = isset($dhcpdconf['ignoreclientuids']);
 	$pconfig['nonak'] = isset($dhcpdconf['nonak']);
 	$pconfig['ddnsdomain'] = $dhcpdconf['ddnsdomain'];
 	$pconfig['ddnsdomainprimary'] = $dhcpdconf['ddnsdomainprimary'];
+	$pconfig['ddnsdomainsecondary'] = $dhcpdconf['ddnsdomainsecondary'];
 	$pconfig['ddnsdomainkeyname'] = $dhcpdconf['ddnsdomainkeyname'];
 	$pconfig['ddnsdomainkeyalgorithm'] = $dhcpdconf['ddnsdomainkeyalgorithm'];
 	$pconfig['ddnsdomainkey'] = $dhcpdconf['ddnsdomainkey'];
@@ -175,7 +182,7 @@ if (is_array($dhcpdconf)) {
 	$pconfig['ddnsforcehostname'] = isset($dhcpdconf['ddnsforcehostname']);
 	$pconfig['mac_allow'] = $dhcpdconf['mac_allow'];
 	$pconfig['mac_deny'] = $dhcpdconf['mac_deny'];
-	list($pconfig['ntp1'], $pconfig['ntp2']) = $dhcpdconf['ntpserver'];
+	list($pconfig['ntp1'], $pconfig['ntp2'], $pconfig['ntp3'] ) = $dhcpdconf['ntpserver'];
 	$pconfig['tftp'] = $dhcpdconf['tftp'];
 	$pconfig['ldap'] = $dhcpdconf['ldap'];
 	$pconfig['netboot'] = isset($dhcpdconf['netboot']);
@@ -183,6 +190,8 @@ if (is_array($dhcpdconf)) {
 	$pconfig['filename'] = $dhcpdconf['filename'];
 	$pconfig['filename32'] = $dhcpdconf['filename32'];
 	$pconfig['filename64'] = $dhcpdconf['filename64'];
+	$pconfig['filename32arm'] = $dhcpdconf['filename32arm'];
+	$pconfig['filename64arm'] = $dhcpdconf['filename64arm'];
 	$pconfig['rootpath'] = $dhcpdconf['rootpath'];
 	$pconfig['netmask'] = $dhcpdconf['netmask'];
 	$pconfig['numberoptions'] = $dhcpdconf['numberoptions'];
@@ -380,14 +389,25 @@ if (isset($_POST['save'])) {
 	if ($_POST['maxtime'] && (!is_numeric($_POST['maxtime']) || ($_POST['maxtime'] < 60) || ($_POST['maxtime'] <= $_POST['deftime']))) {
 		$input_errors[] = gettext("The maximum lease time must be at least 60 seconds and higher than the default lease time.");
 	}
-	if ($_POST['ddnsupdate'] && !is_domain($_POST['ddnsdomain'])) {
-		$input_errors[] = gettext("A valid domain name must be specified for the dynamic DNS registration.");
-	}
-	if ($_POST['ddnsupdate'] && !is_ipaddrv4($_POST['ddnsdomainprimary'])) {
-		$input_errors[] = gettext("A valid primary domain name server IP address must be specified for the dynamic domain name.");
-	}
-	if ($_POST['ddnsupdate'] && (!$_POST['ddnsdomainkeyname'] || !$_POST['ddnsdomainkeyalgorithm'] || !$_POST['ddnsdomainkey'])) {
-		$input_errors[] = gettext("A valid domain key name, algorithm and secret must be specified.");
+	if ($_POST['ddnsupdate']) {
+		if (!is_domain($_POST['ddnsdomain'])) {
+			$input_errors[] = gettext("A valid domain name must be specified for the dynamic DNS registration.");
+		}
+		if (!is_ipaddr($_POST['ddnsdomainprimary'])) {
+			$input_errors[] = gettext("A valid primary domain name server IP address must be specified for the dynamic domain name.");
+		}
+		if (!empty($_POST['ddnsdomainsecondary']) && !is_ipaddr($_POST['ddnsdomainsecondary'])) {
+			$input_errors[] = gettext("A valid secondary domain name server IP address must be specified for the dynamic domain name.");
+		}
+		if (!$_POST['ddnsdomainkeyname'] || !$_POST['ddnsdomainkeyalgorithm'] || !$_POST['ddnsdomainkey']) {
+			$input_errors[] = gettext("A valid domain key name, algorithm and secret must be specified.");
+		}
+		if (preg_match('/[^A-Za-z0-9\-_]/', $_POST['ddnsdomainkeyname'])) {
+			$input_errors[] = gettext("The domain key name may only contain the characters a-z, A-Z, 0-9, '-' and '_'");
+		}
+		if ($_POST['ddnsdomainkey'] && !base64_decode($_POST['ddnsdomainkey'], true)) {
+			$input_errors[] = gettext("The domain key secret must be a Base64 encoded value.");
+		}
 	}
 	if ($_POST['domainsearchlist']) {
 		$domain_array = preg_split("/[ ;]+/", $_POST['domainsearchlist']);
@@ -407,10 +427,12 @@ if (isset($_POST['save'])) {
 		$input_errors[] = gettext("If a mac deny list is specified, it must contain only valid partial MAC addresses.");
 	}
 
-	if (($_POST['ntp1'] && (!is_ipaddrv4($_POST['ntp1']) && !is_hostname($_POST['ntp1']))) || ($_POST['ntp2'] && (!is_ipaddrv4($_POST['ntp2']) && !is_hostname($_POST['ntp2'])))) {
+	if (($_POST['ntp1'] && (!is_ipaddrv4($_POST['ntp1']) && !is_hostname($_POST['ntp1']))) ||
+	    ($_POST['ntp2'] && (!is_ipaddrv4($_POST['ntp2']) && !is_hostname($_POST['ntp2']))) ||
+	    ($_POST['ntp3'] && (!is_ipaddrv4($_POST['ntp3']) && !is_hostname($_POST['ntp3'])))) {
 		$input_errors[] = gettext("A valid IP address or hostname must be specified for the primary/secondary NTP servers.");
 	}
-	if (($_POST['domain'] && !is_domain($_POST['domain']))) {
+	if ($_POST['domain'] && (!is_domain($_POST['domain'], false, false))) {
 		$input_errors[] = gettext("A valid domain name must be specified for the DNS domain.");
 	}
 	if ($_POST['tftp'] && !is_ipaddrv4($_POST['tftp']) && !is_domain($_POST['tftp']) && !filter_var($_POST['tftp'], FILTER_VALIDATE_URL)) {
@@ -659,11 +681,18 @@ if (isset($_POST['save'])) {
 		$dhcpdconf['domain'] = $_POST['domain'];
 		$dhcpdconf['domainsearchlist'] = $_POST['domainsearchlist'];
 		$dhcpdconf['ignorebootp'] = ($_POST['ignorebootp']) ? true : false;
-		$dhcpdconf['denyunknown'] = ($_POST['denyunknown']) ? true : false;
+
+		if (in_array($_POST['denyunknown'], array("enabled", "class"))) {
+			$dhcpdconf['denyunknown'] = $_POST['denyunknown'];
+		} else {
+			unset($dhcpdconf['denyunknown']);
+		}
+
 		$dhcpdconf['ignoreclientuids'] = ($_POST['ignoreclientuids']) ? true : false;
 		$dhcpdconf['nonak'] = ($_POST['nonak']) ? true : false;
 		$dhcpdconf['ddnsdomain'] = $_POST['ddnsdomain'];
 		$dhcpdconf['ddnsdomainprimary'] = $_POST['ddnsdomainprimary'];
+		$dhcpdconf['ddnsdomainsecondary'] = (!empty($_POST['ddnsdomainsecondary'])) ? $_POST['ddnsdomainsecondary'] : ''; 
 		$dhcpdconf['ddnsdomainkeyname'] = $_POST['ddnsdomainkeyname'];
 		$dhcpdconf['ddnsdomainkeyalgorithm'] = $_POST['ddnsdomainkeyalgorithm'];
 		$dhcpdconf['ddnsdomainkey'] = $_POST['ddnsdomainkey'];
@@ -680,6 +709,9 @@ if (isset($_POST['save'])) {
 		if ($_POST['ntp2']) {
 			$dhcpdconf['ntpserver'][] = $_POST['ntp2'];
 		}
+		if ($_POST['ntp3']) {
+			$dhcpdconf['ntpserver'][] = $_POST['ntp3'];
+		}
 
 		$dhcpdconf['tftp'] = $_POST['tftp'];
 		$dhcpdconf['ldap'] = $_POST['ldap'];
@@ -688,6 +720,8 @@ if (isset($_POST['save'])) {
 		$dhcpdconf['filename'] = $_POST['filename'];
 		$dhcpdconf['filename32'] = $_POST['filename32'];
 		$dhcpdconf['filename64'] = $_POST['filename64'];
+		$dhcpdconf['filename32arm'] = $_POST['filename32arm'];
+		$dhcpdconf['filename64arm'] = $_POST['filename64arm'];
 		$dhcpdconf['rootpath'] = $_POST['rootpath'];
 		unset($dhcpdconf['statsgraph']);
 		if ($_POST['statsgraph']) {
@@ -965,12 +999,19 @@ $section->addInput(new Form_Checkbox(
 	$pconfig['ignorebootp']
 ));
 
-$section->addInput(new Form_Checkbox(
+$section->addInput(new Form_Select(
 	'denyunknown',
 	'Deny unknown clients',
-	'Only the clients defined below will get DHCP leases from this server.',
-	$pconfig['denyunknown']
-));
+	$pconfig['denyunknown'],
+	array(
+		"disabled" => "Allow all clients",
+		"enabled" => "Allow known clients from any interface",
+		"class" => "Allow known clients from only this interface",
+	)
+))->setHelp('When set to %3$sAllow all clients%4$s, any DHCP client will get an IP address within this scope/range on this interface. '.
+	'If set to %3$sAllow known clients from any interface%4$s, any DHCP client with a MAC address listed on %1$s%3$sany%4$s%2$s scope(s)/interface(s) will get an IP address. ' .
+	'If set to %3$sAllow known clients from only this interface%4$s, only MAC addresses listed below (i.e. for this interface) will get an IP address within this scope/range.',
+	'<i>', '</i>', '<b>', '</b>');
 
 $section->addInput(new Form_Checkbox(
 	'nonak',
@@ -1263,8 +1304,15 @@ $section->addInput(new Form_IpAddress(
 	'ddnsdomainprimary',
 	'Primary DDNS address',
 	$pconfig['ddnsdomainprimary'],
-	'V4'
+	'BOTH'
 ))->setHelp('Primary domain name server IP address for the dynamic domain name.');
+
+$section->addInput(new Form_IpAddress(
+	'ddnsdomainsecondary',
+	'Secondary DDNS address',
+	$pconfig['ddnsdomainsecondary'],
+	'BOTH'
+))->setHelp('Secondary domain name server IP address for the dynamic domain name.');
 
 $section->addInput(new Form_Input(
 	'ddnsdomainkeyname',
@@ -1292,7 +1340,8 @@ $section->addInput(new Form_Input(
 	'DNS Domain key secret',
 	'text',
 	$pconfig['ddnsdomainkey']
-))->setHelp('Dynamic DNS domain key secret which will be used to register client names in the DNS server.');
+))->setAttribute('placeholder', 'Base64 encoded string')
+->setHelp('Dynamic DNS domain key secret which will be used to register client names in the DNS server.');
 
 $section->addInput(new Form_Select(
 	'ddnsclientupdates',
@@ -1362,6 +1411,13 @@ $section->addInput(new Form_IpAddress(
 	'ntp2',
 	'NTP Server 2',
 	$pconfig['ntp2'],
+	'HOSTV4'
+));
+
+$section->addInput(new Form_IpAddress(
+	'ntp3',
+	'NTP Server 3',
+	$pconfig['ntp3'],
 	'HOSTV4'
 ));
 
@@ -1457,8 +1513,22 @@ $section->addInput(new Form_Input(
 	'UEFI 64 bit file name',
 	'text',
 	$pconfig['filename64']
+));
+
+$section->addInput(new Form_Input(
+	'filename32arm',
+	'ARM 32 bit file name',
+	'text',
+	$pconfig['filename32arm']
+));
+
+$section->addInput(new Form_Input(
+	'filename64arm',
+	'ARM 64 bit file name',
+	'text',
+	$pconfig['filename64arm']
 ))->setHelp('Both a filename and a boot server must be configured for this to work! ' .
-			'All three filenames and a configured boot server are necessary for UEFI to work! ');
+			'All five filenames and a configured boot server are necessary for UEFI & ARM to work! ');
 
 $section->addInput(new Form_Input(
 	'rootpath',
@@ -1605,7 +1675,14 @@ if (!is_numeric($pool) && !($act == "newpool")) {
 ?>
 
 <div class="panel panel-default">
-	<div class="panel-heading"><h2 class="panel-title"><?=gettext("DHCP Static Mappings for this Interface")?></h2></div>
+<?php
+	if (is_array($a_maps) && (count($a_maps) > 0)) {
+		$title = sprintf(gettext('DHCP Static Mappings for this Interface (total: %d)'), count($a_maps));
+	} else {
+		$title = gettext("DHCP Static Mappings for this Interface");
+	}
+?>
+	<div class="panel-heading"><h2 class="panel-title"><?=$title?></h2></div>
 	<div class="table-responsive">
 			<table class="table table-striped table-hover table-condensed sortable-theme-bootstrap" data-sortable>
 				<thead>
@@ -1703,6 +1780,7 @@ events.push(function() {
 				!$pconfig['ddnsforcehostname'] &&
 				empty($pconfig['ddnsdomain']) &&
 				empty($pconfig['ddnsdomainprimary']) &&
+				empty($pconfig['ddnsdomainsecondary']) &&
 			    empty($pconfig['ddnsdomainkeyname']) &&
 			    (empty($pconfig['ddnsdomainkeyalgorithm']) || ($pconfig['ddnsdomainkeyalgorithm'] == "hmac-md5")) &&
 			    (empty($pconfig['ddnsclientupdates']) || ($pconfig['ddnsclientupdates'] == "allow")) &&
@@ -1722,6 +1800,7 @@ events.push(function() {
 		hideInput('ddnsdomain', !showadvdns);
 		hideCheckbox('ddnsforcehostname', !showadvdns);
 		hideInput('ddnsdomainprimary', !showadvdns);
+		hideInput('ddnsdomainsecondary', !showadvdns);
 		hideInput('ddnsdomainkeyname', !showadvdns);
 		hideInput('ddnsdomainkeyalgorithm', !showadvdns);
 		hideInput('ddnsdomainkey', !showadvdns);
@@ -1782,7 +1861,7 @@ events.push(function() {
 		// On page load decide the initial state based on the data.
 		if (ispageload) {
 <?php
-			if (empty($pconfig['ntp1']) && empty($pconfig['ntp2'])) {
+			if (empty($pconfig['ntp1']) && empty($pconfig['ntp2']) && empty($pconfig['ntp3']) ) {
 				$showadv = false;
 			} else {
 				$showadv = true;
@@ -1796,6 +1875,7 @@ events.push(function() {
 
 		hideInput('ntp1', !showadvntp);
 		hideInput('ntp2', !showadvntp);
+		hideInput('ntp3', !showadvntp);
 
 		if (showadvntp) {
 			text = "<?=gettext('Hide Advanced');?>";

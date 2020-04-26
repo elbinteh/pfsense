@@ -5,7 +5,7 @@
  * part of pfSense (https://www.pfsense.org)
  * Copyright (c) 2004-2013 BSD Perimeter
  * Copyright (c) 2013-2016 Electric Sheep Fencing
- * Copyright (c) 2014-2019 Rubicon Communications, LLC (Netgate)
+ * Copyright (c) 2014-2020 Rubicon Communications, LLC (Netgate)
  * All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -142,6 +142,8 @@ if ($_POST['save']) {
 			if ($_POST["username{$x}"]) {
 				if (empty($_POST["password{$x}"])) {
 					$input_errors[] = sprintf(gettext("No password specified for username %s"), $_POST["username{$x}"]);
+				} elseif (preg_match("/^!/", trim($_POST["password{$x}"]))) {
+					$input_errors[] = gettext("User passwords cannot start with '!'.");
 				}
 				if ($_POST["ip{$x}"] != "" && !is_ipaddr($_POST["ip{$x}"])) {
 					$input_errors[] = sprintf(gettext("Incorrect ip address specified for username %s"), $_POST["username{$x}"]);

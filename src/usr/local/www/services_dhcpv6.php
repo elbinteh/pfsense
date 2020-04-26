@@ -5,7 +5,7 @@
  * part of pfSense (https://www.pfsense.org)
  * Copyright (c) 2004-2013 BSD Perimeter
  * Copyright (c) 2013-2016 Electric Sheep Fencing
- * Copyright (c) 2014-2019 Rubicon Communications, LLC (Netgate)
+ * Copyright (c) 2014-2020 Rubicon Communications, LLC (Netgate)
  * Copyright (c) 2010 Seth Mos <seth.mos@dds.nl>
  * All rights reserved.
  *
@@ -141,9 +141,11 @@ if (is_array($config['dhcpdv6'][$if])) {
 	$pconfig['domainsearchlist'] = $config['dhcpdv6'][$if]['domainsearchlist'];
 	list($pconfig['wins1'], $pconfig['wins2']) = $config['dhcpdv6'][$if]['winsserver'];
 	list($pconfig['dns1'], $pconfig['dns2'], $pconfig['dns3'], $pconfig['dns4']) = $config['dhcpdv6'][$if]['dnsserver'];
+	$pconfig['dhcp6c-dns'] = ($config['dhcpdv6'][$if]['dhcp6c-dns'] != 'disabled') ? "enabled" : "disabled";
 	$pconfig['enable'] = isset($config['dhcpdv6'][$if]['enable']);
 	$pconfig['ddnsdomain'] = $config['dhcpdv6'][$if]['ddnsdomain'];
 	$pconfig['ddnsdomainprimary'] = $config['dhcpdv6'][$if]['ddnsdomainprimary'];
+	$pconfig['ddnsdomainsecondary'] = $config['dhcpdv6'][$if]['ddnsdomainsecondary'];
 	$pconfig['ddnsdomainkeyname'] = $config['dhcpdv6'][$if]['ddnsdomainkeyname'];
 	$pconfig['ddnsdomainkeyalgorithm'] = $config['dhcpdv6'][$if]['ddnsdomainkeyalgorithm'];
 	$pconfig['ddnsdomainkey'] = $config['dhcpdv6'][$if]['ddnsdomainkey'];
@@ -151,7 +153,7 @@ if (is_array($config['dhcpdv6'][$if])) {
 	$pconfig['ddnsforcehostname'] = isset($config['dhcpdv6'][$if]['ddnsforcehostname']);
 	$pconfig['ddnsreverse'] = isset($config['dhcpdv6'][$if]['ddnsreverse']);
 	$pconfig['ddnsclientupdates'] = $config['dhcpdv6'][$if]['ddnsclientupdates'];
-	list($pconfig['ntp1'], $pconfig['ntp2']) = $config['dhcpdv6'][$if]['ntpserver'];
+	list($pconfig['ntp1'], $pconfig['ntp2'], $pconfig['ntp3'] ) = $config['dhcpdv6'][$if]['ntpserver'];
 	$pconfig['tftp'] = $config['dhcpdv6'][$if]['tftp'];
 	$pconfig['ldap'] = $config['dhcpdv6'][$if]['ldap'];
 	$pconfig['netboot'] = isset($config['dhcpdv6'][$if]['netboot']);
@@ -226,10 +228,10 @@ if (isset($_POST['apply'])) {
 
 	// Note: if DHCPv6 Server is not enabled, then it is OK to adjust other parameters without specifying range from-to.
 	if ($_POST['enable']) {
-		$reqdfields = explode(" ", "range_from range_to");
-		$reqdfieldsn = array(gettext("Range begin"), gettext("Range end"));
-
-		do_input_validation($_POST, $reqdfields, $reqdfieldsn, $input_errors);
+		if ((empty($_POST['range_from']) || empty($_POST['range_to'])) &&
+		    ($config['dhcpdv6'][$if]['ramode'] != 'stateless_dhcp')) {
+			$input_errors[] = gettext("A valid range must be specified for any mode except Stateless DHCP.");
+		}
 	}
 
 	if (($_POST['prefixrange_from'] && !is_ipaddrv6($_POST['prefixrange_from']))) {
@@ -309,14 +311,25 @@ if (isset($_POST['apply'])) {
 	if ($_POST['maxtime'] && (!is_numeric($_POST['maxtime']) || ($_POST['maxtime'] < 60) || ($_POST['maxtime'] <= $_POST['deftime']))) {
 		$input_errors[] = gettext("The maximum lease time must be at least 60 seconds and higher than the default lease time.");
 	}
-	if ($_POST['ddnsupdate'] && !is_domain($_POST['ddnsdomain'])) {
-		$input_errors[] = gettext("A valid domain name must be specified for the dynamic DNS registration.");
-	}
-	if ($_POST['ddnsupdate'] && !is_ipaddrv4($_POST['ddnsdomainprimary'])) {
-		$input_errors[] = gettext("A valid primary domain name server IPv4 address must be specified for the dynamic domain name.");
-	}
-	if ($_POST['ddnsupdate'] && (!$_POST['ddnsdomainkeyname'] || !$_POST['ddnsdomainkeyalgorithm'] || !$_POST['ddnsdomainkey'])) {
-		$input_errors[] = gettext("A valid domain key name, algorithm and secret must be specified.");
+	if ($_POST['ddnsupdate']) {
+		if (!is_domain($_POST['ddnsdomain'])) {
+			$input_errors[] = gettext("A valid domain name must be specified for the dynamic DNS registration.");
+		}
+		if (!is_ipaddr($_POST['ddnsdomainprimary'])) {
+			$input_errors[] = gettext("A valid primary domain name server IP address must be specified for the dynamic domain name.");
+		}
+		if (!empty($_POST['ddnsdomainsecondary']) && !is_ipaddr($_POST['ddnsdomainsecondary'])) {
+			$input_errors[] = gettext("A valid secondary domain name server IP address must be specified for the dynamic domain name.");
+		}
+		if (!$_POST['ddnsdomainkeyname'] || !$_POST['ddnsdomainkeyalgorithm'] || !$_POST['ddnsdomainkey']) {
+			$input_errors[] = gettext("A valid domain key name, algorithm and secret must be specified.");
+		}
+		if (preg_match('/[^A-Za-z0-9\-_]/', $_POST['ddnsdomainkeyname'])) {
+			$input_errors[] = gettext("The domain key name may only contain the characters a-z, A-Z, 0-9, '-' and '_'");
+		}
+		if ($_POST['ddnsdomainkey'] && !base64_decode($_POST['ddnsdomainkey'], true)) {
+			$input_errors[] = gettext("The domain key secret must be a Base64 encoded value.");
+		}
 	}
 	if ($_POST['domainsearchlist']) {
 		$domain_array = preg_split("/[ ;]+/", $_POST['domainsearchlist']);
@@ -328,7 +341,9 @@ if (isset($_POST['apply'])) {
 		}
 	}
 
-	if (($_POST['ntp1'] && !is_ipaddrv6($_POST['ntp1'])) || ($_POST['ntp2'] && !is_ipaddrv6($_POST['ntp2']))) {
+	if (($_POST['ntp1'] && !is_ipaddrv6($_POST['ntp1'])) ||
+	    ($_POST['ntp2'] && !is_ipaddrv6($_POST['ntp2'])) ||
+	    ($_POST['ntp3'] && !is_ipaddrv6($_POST['ntp3']))) {
 		$input_errors[] = gettext("A valid IPv6 address must be specified for the primary/secondary NTP servers.");
 	}
 	if (($_POST['domain'] && !is_domain($_POST['domain']))) {
@@ -441,12 +456,13 @@ if (isset($_POST['apply'])) {
 		if ($_POST['dns4']) {
 			$config['dhcpdv6'][$if]['dnsserver'][] = $_POST['dns4'];
 		}
-
+		$config['dhcpdv6'][$if]['dhcp6c-dns'] = ($_POST['dhcp6c-dns']) ? "enabled" : "disabled";
 		$config['dhcpdv6'][$if]['domain'] = $_POST['domain'];
 		$config['dhcpdv6'][$if]['domainsearchlist'] = $_POST['domainsearchlist'];
 		$config['dhcpdv6'][$if]['enable'] = ($_POST['enable']) ? true : false;
 		$config['dhcpdv6'][$if]['ddnsdomain'] = $_POST['ddnsdomain'];
 		$config['dhcpdv6'][$if]['ddnsdomainprimary'] = $_POST['ddnsdomainprimary'];
+		$config['dhcpdv6'][$if]['ddnsdomainsecondary'] = (!empty($_POST['ddnsdomainsecondary'])) ? $_POST['ddnsdomainsecondary'] : ''; 
 		$config['dhcpdv6'][$if]['ddnsdomainkeyname'] = $_POST['ddnsdomainkeyname'];
 		$config['dhcpdv6'][$if]['ddnsdomainkeyalgorithm'] = $_POST['ddnsdomainkeyalgorithm'];
 		$config['dhcpdv6'][$if]['ddnsdomainkey'] = $_POST['ddnsdomainkey'];
@@ -461,6 +477,9 @@ if (isset($_POST['apply'])) {
 		}
 		if ($_POST['ntp2']) {
 			$config['dhcpdv6'][$if]['ntpserver'][] = $_POST['ntp2'];
+		}
+		if ($_POST['ntp3']) {
+			$config['dhcpdv6'][$if]['ntpserver'][] = $_POST['ntp3'];
 		}
 
 		$config['dhcpdv6'][$if]['tftp'] = $_POST['tftp'];
@@ -708,6 +727,14 @@ for ($i=1;$i<=4; $i++) {
 $group->setHelp('Leave blank to use the system default DNS servers, this interface\'s IP if DNS forwarder is enabled, or the servers configured on the "General" page.');
 $section->add($group);
 
+$section->addInput(new Form_Checkbox(
+	'dhcp6c-dns',
+	null,
+	'Provide DNS servers to DHCPv6 clients',
+	($pconfig['dhcp6c-dns'] == "enabled")
+))->setHelp('Unchecking this box disables the dhcp6.name-servers option. ' .
+			'Use with caution, as the resulting behavior may violate RFCs and lead to unintended client behavior.');
+
 $section->addInput(new Form_Input(
 	'domain',
 	'Domain name',
@@ -784,10 +811,17 @@ $section->addInput(new Form_Checkbox(
 
 $section->addInput(new Form_IpAddress(
 	'ddnsdomainprimary',
-	'DDNS Server IP',
+	'Primary DDNS address',
 	$pconfig['ddnsdomainprimary'],
-	'V4'
-))->setHelp('Enter the primary domain name server IPv4 address for the dynamic domain name.');
+	'BOTH'
+))->setHelp('Enter the primary domain name server IP address for the dynamic domain name.');
+
+$section->addInput(new Form_IpAddress(
+	'ddnsdomainsecondary',
+	'Secondary DDNS address',
+	$pconfig['ddnsdomainsecondary'],
+	'BOTH'
+))->setHelp('Enter the secondary domain name server IP address for the dynamic domain name.');
 
 $section->addInput(new Form_Input(
 	'ddnsdomainkeyname',
@@ -815,7 +849,8 @@ $section->addInput(new Form_Input(
 	'DDNS Domain Key secret',
 	'text',
 	$pconfig['ddnsdomainkey']
-))->setHelp('Enter the dynamic DNS domain key secret which will be used to register client names in the DNS server.');
+))->setAttribute('placeholder', 'Base64 encoded string')
+->setHelp('Enter the dynamic DNS domain key secret which will be used to register client names in the DNS server.');
 
 $section->addInput(new Form_Select(
 	'ddnsclientupdates',
@@ -867,6 +902,14 @@ $group->add(new Form_Input(
 	'text',
 	$pconfig['ntp2'],
 	['placeholder' => 'NTP 2']
+));
+
+$group->add(new Form_Input(
+	'ntp3',
+	'NTP Server 3',
+	'text',
+	$pconfig['ntp3'],
+	['placeholder' => 'NTP 3']
 ));
 
 $group->addClass('ntpclass');
@@ -1100,6 +1143,7 @@ events.push(function() {
 			    !$pconfig['ddnsforcehostname'] &&
 			    empty($pconfig['ddnsdomain']) &&
 			    empty($pconfig['ddnsdomainprimary']) &&
+			    empty($pconfig['ddnsdomainsecondary']) &&
 			    empty($pconfig['ddnsdomainkeyname']) &&
 			    (empty($pconfig['ddnsdomainkeyalgorithm'])  || ($pconfig['ddnsdomainkeyalgorithm'] == "hmac-md5")) &&
 			    empty($pconfig['ddnsdomainkey']) &&
@@ -1120,6 +1164,7 @@ events.push(function() {
 		hideInput('ddnsdomain', !showadvdns);
 		hideCheckbox('ddnsforcehostname', !showadvdns);
 		hideInput('ddnsdomainprimary', !showadvdns);
+		hideInput('ddnsdomainsecondary', !showadvdns);
 		hideInput('ddnsdomainkeyname', !showadvdns);
 		hideInput('ddnsdomainkeyalgorithm', !showadvdns);
 		hideInput('ddnsdomainkey', !showadvdns);
@@ -1146,7 +1191,7 @@ events.push(function() {
 		// On page load decide the initial state based on the data.
 		if (ispageload) {
 <?php
-			if (empty($pconfig['ntp1']) && empty($pconfig['ntp2'])) {
+			if (empty($pconfig['ntp1']) && empty($pconfig['ntp2']) && empty($pconfig['ntp3'])) {
 				$showadv = false;
 			} else {
 				$showadv = true;
@@ -1160,6 +1205,7 @@ events.push(function() {
 
 		hideInput('ntp1', !showadvntp);
 		hideInput('ntp2', !showadvntp);
+		hideInput('ntp3', !showadvntp);
 
 		if (showadvntp) {
 			text = "<?=gettext('Hide Advanced');?>";

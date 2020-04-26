@@ -5,7 +5,7 @@
  * part of pfSense (https://www.pfsense.org)
  * Copyright (c) 2004-2013 BSD Perimeter
  * Copyright (c) 2013-2016 Electric Sheep Fencing
- * Copyright (c) 2014-2019 Rubicon Communications, LLC (Netgate)
+ * Copyright (c) 2014-2020 Rubicon Communications, LLC (Netgate)
  * Copyright (c) 2008 Shrew Soft Inc.
  * All rights reserved.
  *
@@ -98,7 +98,7 @@ if ($act == "new") {
 	$pconfig['ncp-ciphers'] = "AES-128-GCM";
 	$pconfig['autokey_enable'] = "yes";
 	$pconfig['tlsauth_enable'] = "yes";
-	$pconfig['tlsauth_keydir'] = "";
+	$pconfig['tlsauth_keydir'] = "default";
 	$pconfig['autotls_enable'] = "yes";
 	$pconfig['dh_length'] = 2048;
 	$pconfig['dev_mode'] = "tun";
@@ -144,11 +144,15 @@ if (($act == "edit") || ($act == "dup")) {
 				$pconfig['tlsauth_enable'] = "yes";
 				$pconfig['tls'] = base64_decode($a_server[$id]['tls']);
 				$pconfig['tls_type'] = $a_server[$id]['tls_type'];
-				$pconfig['tlsauth_keydir'] = $a_client[$id]['tlsauth_keydir'];
+				$pconfig['tlsauth_keydir'] = $a_server[$id]['tlsauth_keydir'];
 			}
 
 			$pconfig['caref'] = $a_server[$id]['caref'];
 			$pconfig['crlref'] = $a_server[$id]['crlref'];
+			if (isset($a_server[$id]['ocspcheck'])) {
+				$pconfig['ocspcheck'] = "yes";
+			}
+			$pconfig['ocspurl'] = $a_server[$id]['ocspurl'];
 			$pconfig['certref'] = $a_server[$id]['certref'];
 			$pconfig['dh_length'] = $a_server[$id]['dh_length'];
 			$pconfig['ecdh_curve'] = $a_server[$id]['ecdh_curve'];
@@ -555,6 +559,9 @@ if ($_POST['save']) {
 	if (!empty($pconfig['inactive_seconds']) && !is_numericint($pconfig['inactive_seconds'])) {
 		$input_errors[] = gettext("The supplied Inactive Seconds value is invalid.");
 	}
+	if (!empty($pconfig['ocspurl']) && !is_URL($pconfig['ocspurl'])) {
+		$input_errors[] = gettext("OCSP URL must be a valid URL address.");
+	}
 
 	do_input_validation($_POST, $reqdfields, $reqdfieldsn, $input_errors);
 
@@ -598,10 +605,14 @@ if ($_POST['save']) {
 				}
 				$server['tls'] = base64_encode($pconfig['tls']);
 				$server['tls_type'] = $pconfig['tls_type'];
-				$pconfig['tlsauth_keydir'] = $a_client[$id]['tlsauth_keydir'];
+				$server['tlsauth_keydir'] = $pconfig['tlsauth_keydir'];
 			}
 			$server['caref'] = $pconfig['caref'];
 			$server['crlref'] = $pconfig['crlref'];
+			if ($pconfig['ocspcheck']) {
+				$server['ocspcheck'] = "yes";
+			}
+			$server['ocspurl'] = $pconfig['ocspurl'];
 			$server['certref'] = $pconfig['certref'];
 			$server['dh_length'] = $pconfig['dh_length'];
 			$server['ecdh_curve'] = $pconfig['ecdh_curve'];
@@ -892,12 +903,15 @@ if ($act=="new" || $act=="edit"):
 		    'Encryption and Authentication mode also encrypts control channel communication, providing more privacy and traffic control channel obfuscation.',
 			'<br/>');
 
+	if (strlen($pconfig['tlsauth_keydir']) == 0) {
+		$pconfig['tlsauth_keydir'] = "default";
+	}
 	$section->addInput(new Form_Select(
 		'tlsauth_keydir',
 		'*TLS keydir direction',
 		$pconfig['tlsauth_keydir'],
 		openvpn_get_keydirlist()
-        ))->setHelp('The TLS Key Direction must be set to complementary values on the client and server. ' .
+	))->setHelp('The TLS Key Direction must be set to complementary values on the client and server. ' .
 			'For example, if the server is set to 0, the client must be set to 1. ' .
 			'Both may be set to omit the direction, in which case the TLS Key will be used bidirectionally.');
 
@@ -929,13 +943,27 @@ if ($act=="new" || $act=="edit"):
 		));
 	}
 
+	$section->addInput(new Form_Checkbox(
+		'ocspcheck',
+		'OCSP Check',
+		'Check client certificates with OCSP',
+		$pconfig['ocspcheck']
+	));
+
+	$section->addInput(new Form_Input(
+		'ocspurl',
+		'OCSP URL',
+		'url',
+		$pconfig['ocspurl']
+	));
+
 	$certhelp = '<span id="certtype"></span>';
 	if (count($a_cert)) {
 		if (!empty(trim($pconfig['certref']))) {
 			$thiscert = lookup_cert($pconfig['certref']);
 			$purpose = cert_get_purpose($thiscert['crt'], true);
 			if ($purpose['server'] != "Yes") {
-				$certhelp = '<span id="certtype" class="text-danger">' . gettext("Warning: The selected server certificate was not created as an SSL Server certificate and may not work as expected") . ' </span>';
+				$certhelp = '<span id="certtype" class="text-danger">' . gettext("Warning: The selected server certificate was not created as an SSL/TLS Server certificate and may not work as expected") . ' </span>';
 			}
 		}
 	} else {
@@ -965,7 +993,7 @@ if ($act=="new" || $act=="edit"):
 		        '<br/>' .
 		        gettext('Generating new or stronger DH parameters is CPU-intensive and must be performed manually.') . ' ' .
 		        sprintf(gettext('Consult %1$sthe doc wiki article on DH Parameters%2$sfor information on generating new or stronger parameter sets.'),
-					'<a href="https://doc.pfsense.org/index.php/DH_Parameters">',
+					'<a href="https://docs.netgate.com/pfsense/en/latest/book/openvpn/openvpn-configuration-options.html#dh-parameters-length">',
 					'</a> '),
 				'info', false),
 		    '</div>');
@@ -1694,6 +1722,7 @@ events.push(function() {
 		hideCheckbox('tlsauth_enable', false);
 		hideInput('caref', false);
 		hideInput('crlref', false);
+		hideInput('ocspcheck', false);
 		hideLabel('Peer Certificate Revocation list', false);
 
 		switch (value) {
@@ -1732,6 +1761,7 @@ events.push(function() {
 				hideInput('tls_type', true);
 				hideInput('caref', true);
 				hideInput('crlref', true);
+				hideInput('ocspcheck', true);
 				hideLabel('Peer Certificate Revocation list', true);
 				hideLabel('Peer Certificate Authority', true);
 				hideInput('certref', true);
@@ -2001,6 +2031,12 @@ events.push(function() {
 		hideCheckbox('ping_action_push', keepalive);
 	}
 
+	function ocspcheck_change() {
+		var hide  = ! $('#ocspcheck').prop('checked')
+
+		hideInput('ocspurl', hide);
+	}
+
 	// ---------- Monitor elements for change and call the appropriate display functions ------------------------------
 
 	// NTP
@@ -2074,12 +2110,17 @@ events.push(function() {
 		ping_method_change();
 	});
 
+	// OCSP
+	$('#ocspcheck').click(function () {
+		ocspcheck_change();
+	});
+
 	// Certref
 	$('#certref').on('change', function() {
 		var errmsg = "";
 
 		if ($(this).find(":selected").index() >= "<?=$servercerts?>") {
-			var errmsg = '<span class="text-danger">' + "<?=gettext('Warning: The selected server certificate was not created as an SSL Server certificate and may not work as expected')?>" + '</span>';
+			var errmsg = '<span class="text-danger">' + "<?=gettext('Warning: The selected server certificate was not created as an SSL/TLS Server certificate and may not work as expected')?>" + '</span>';
 		}
 
 		$('#certtype').html(errmsg);
@@ -2142,6 +2183,7 @@ events.push(function() {
 	netbios_change();
 	tuntap_change();
 	ping_method_change();
+	ocspcheck_change();
 });
 //]]>
 </script>

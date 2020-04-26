@@ -5,7 +5,7 @@
  * part of pfSense (https://www.pfsense.org)
  * Copyright (c) 2004-2013 BSD Perimeter
  * Copyright (c) 2013-2016 Electric Sheep Fencing
- * Copyright (c) 2014-2019 Rubicon Communications, LLC (Netgate)
+ * Copyright (c) 2014-2020 Rubicon Communications, LLC (Netgate)
  * Copyright (c) 2005 Paul Taylor (paultaylor@winndixie.com)
  * All rights reserved.
  *
@@ -70,6 +70,9 @@ if ($_POST || $_REQUEST['host']) {
 	}
 	if (($ipproto == "ipv6") && is_ipaddrv4($host)) {
 		$input_errors[] = gettext("When using IPv6, the target host must be an IPv6 address or hostname.");
+	}
+	if (!is_ipaddr($host) && !is_hostname($host)) {
+		$input_errors[] = gettext("Hostname must be a valid hostname or IP address.");
 	}
 
 	$sourceip = $_REQUEST['sourceip'];
@@ -183,7 +186,7 @@ if ($do_traceroute && $result) {
 		<div class="panel-heading"><h2 class="panel-title"><?=gettext('Results')?></h2></div>
 		<div class="panel-body">
 <?php
-	print('<pre>' . $result . '</pre>');
+	print('<pre>' . htmlspecialchars($result) . '</pre>');
 ?>
 		</div>
 	</div>

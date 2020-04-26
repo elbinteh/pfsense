@@ -6,7 +6,7 @@
  * Copyright (c) 2005-2006 Colin Smith (ethethlay@gmail.com)
  * Copyright (c) 2004-2013 BSD Perimeter
  * Copyright (c) 2013-2016 Electric Sheep Fencing
- * Copyright (c) 2014-2019 Rubicon Communications, LLC (Netgate)
+ * Copyright (c) 2014-2020 Rubicon Communications, LLC (Netgate)
  * All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -104,7 +104,7 @@ function pkg_env($extra_env = array()) {
 		}
 	}
 
-	if (isset($config['system']['use_mfs_tmpvar'])) {
+	if (isset($config['system']['use_mfs_tmpvar']) && !file_exists("/conf/ram_disks_failed")) {
 		$pkg_env_vars['PKG_DBDIR'] = '/root/var/db/pkg';
 		$pkg_env_vars['PKG_CACHEDIR'] = '/root/var/cache/pkg';
 	}

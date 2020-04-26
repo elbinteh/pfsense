@@ -5,7 +5,7 @@
  * part of pfSense (https://www.pfsense.org)
  * Copyright (c) 2004-2013 BSD Perimeter
  * Copyright (c) 2013-2016 Electric Sheep Fencing
- * Copyright (c) 2014-2019 Rubicon Communications, LLC (Netgate)
+ * Copyright (c) 2014-2020 Rubicon Communications, LLC (Netgate)
  * Copyright (c) 2006 Daniel S. Haischt
  * All rights reserved.
  *
@@ -283,6 +283,7 @@ switch ($wancfg['ipaddr']) {
 switch ($wancfg['ipaddrv6']) {
 	case "slaac":
 		$pconfig['type6'] = "slaac";
+		$pconfig['slaacusev4iface'] = isset($wancfg['slaacusev4iface']);
 		break;
 	case "dhcp6":
 		$pconfig['dhcp6-duid'] = $wancfg['dhcp6-duid'];
@@ -550,6 +551,16 @@ if ($_POST['apply']) {
 
 		if (is_numeric($_POST['descr'])) {
 			$input_errors[] = gettext("The interface description cannot contain only numbers.");
+		}
+
+		if ((strlen(trim($_POST['descr'])) > 25) && ((substr($realifname, 0, 4) == 'ovpn') ||
+		    (substr($realifname, 0, 5) == 'ipsec'))) {
+			$input_errors[] = gettext("The OpenVPN and VTI interface description must be less than 26 characters long.");
+		}
+
+		if ((strlen(trim($_POST['descr'])) > 22) && ((substr($realifname, 0, 3) == 'gif') ||
+		    (substr($realifname, 0, 3) == 'gre'))) {
+			$input_errors[] = gettext("The GIF and GRE interface description must be less than 23 characters long.");
 		}
 
 		/*
@@ -1086,6 +1097,7 @@ if ($_POST['apply']) {
 		unset($wancfg['dhcp6-ia-pd-send-hint']);
 		unset($wancfg['dhcp6prefixonly']);
 		unset($wancfg['dhcp6usev4iface']);
+		unset($wancfg['slaacusev4iface']);
 		unset($wancfg['ipv6usev4iface']);
 		unset($wancfg['dhcp6debug']);
 		unset($wancfg['track6-interface']);
@@ -1338,6 +1350,9 @@ if ($_POST['apply']) {
 				break;
 			case "slaac":
 				$wancfg['ipaddrv6'] = "slaac";
+				if ($_POST['slaacusev4iface'] == "yes") {
+					$wancfg['slaacusev4iface'] = true;
+				}
 				break;
 			case "dhcp6":
 				$wancfg['ipaddrv6'] = "dhcp6";
@@ -1961,6 +1976,18 @@ $group->setHelp('If this interface is an Internet connection, select an existing
 				'Gateways can be managed by %2$sclicking here%3$s.', '<br />', '<a target="_blank" href="system_gateways.php">', '</a>');
 
 $section->add($group);
+
+$form->add($section);
+
+$section = new Form_Section('SLAAC IPv6 Configuration');
+$section->addClass('slaac');
+
+$section->addInput(new Form_Checkbox(
+	'slaacusev4iface',
+	'Use IPv4 connectivity as parent interface',
+	'IPv6 will use the IPv4 connectivity link (PPPoE)',
+	$pconfig['slaacusev4iface']
+));
 
 $form->add($section);
 

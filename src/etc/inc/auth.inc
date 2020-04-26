@@ -8,7 +8,7 @@
  * Copyright (c) 2006 Paul Taylor <paultaylor@winn-dixie.com>
  * Copyright (c) 2004-2013 BSD Perimeter
  * Copyright (c) 2013-2016 Electric Sheep Fencing
- * Copyright (c) 2014-2019 Rubicon Communications, LLC (Netgate)
+ * Copyright (c) 2014-2020 Rubicon Communications, LLC (Netgate)
  * All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -389,6 +389,7 @@ function get_user_privileges(& $user) {
 }
 
 function userHasPrivilege($userent, $privid = false) {
+	global $config;
 
 	if (!$privid || !is_array($userent)) {
 		return false;
@@ -401,6 +402,18 @@ function userHasPrivilege($userent, $privid = false) {
 	}
 
 	if (!in_array($privid, $privs)) {
+		return false;
+	}
+
+	/* If someone is in admins group or is admin, do not honor the
+	 * user-config-readonly privilege to prevent foot-shooting due to a
+	 * bad privilege config.
+	 * https://redmine.pfsense.org/issues/10492 */
+	$userGroups = getUserGroups($userent['name'],
+			auth_get_authserver($config['system']['webgui']['authmode']),
+			$_SESSION['user_radius_attributes']);
+	if (($privid == 'user-config-readonly') &&
+	    (($userent['uid'] === "0") || (in_array('admins', $userGroups)))) {
 		return false;
 	}
 
@@ -449,7 +462,9 @@ function local_sync_accounts($u2add, $u2del, $g2add, $g2del) {
 	}
 
 	foreach($u2del as $user) {
-		if ($user['uid'] < 2000 || $user['uid'] > 65000) {
+		if ($user['uid'] > 65000) {
+			continue;
+		} else if ($user['uid'] < 2000 && !in_array($user, $u2add)) {
 			continue;
 		}
 
@@ -776,9 +791,15 @@ function local_user_del($user) {
 }
 
 function local_user_set_password(&$user, $password) {
+	global $config;
+
 	unset($user['password']);
 	unset($user['md5-hash']);
 	$user['bcrypt-hash'] = password_hash($password, PASSWORD_BCRYPT);
+	if (($user['name'] == $config['hasync']['username']) &&
+	    ($config['hasync']['adminsync'] == 'on')) {
+		$config['hasync']['new_password'] = $password;
+	}
 }
 
 function local_user_get_groups($user, $all = false) {
@@ -1368,6 +1389,11 @@ function ldap_backed($username, $passwd, $authcfg, &$attributes = array()) {
 
 	if (!$username) {
 		$attributes['error_message'] = gettext("Invalid Login.");
+		return false;
+	}
+
+	if (!isset($authcfg['ldap_allow_unauthenticated']) && $passwd == '') {
+		$attributes['error_message'] = gettext("Invalid credentials.");
 		return false;
 	}
 
@@ -1990,7 +2016,7 @@ function session_auth() {
 
 	/* Validate incoming login request */
 	$attributes = array('nas_identifier' => 'webConfigurator-' . gethostname());
-	if (isset($_POST['login']) && !empty($_POST['usernamefld']) && !empty($_POST['passwordfld'])) {
+	if (isset($_POST['login']) && !empty($_POST['usernamefld'])) {
 		$authcfg = auth_get_authserver($config['system']['webgui']['authmode']);
 		$remoteauth = authenticate_user($_POST['usernamefld'], $_POST['passwordfld'], $authcfg, $attributes);
 		if ($remoteauth || authenticate_user($_POST['usernamefld'], $_POST['passwordfld'])) {

@@ -5,7 +5,7 @@
  * part of pfSense (https://www.pfsense.org)
  * Copyright (c) 2015 Warren Baker <warren@percol8.co.za>
  * Copyright (c) 2015-2016 Electric Sheep Fencing
- * Copyright (c) 2015-2019 Rubicon Communications, LLC (Netgate)
+ * Copyright (c) 2015-2020 Rubicon Communications, LLC (Netgate)
  * All rights reserved.
  *
  * originally part of m0n0wall (http://m0n0.ch/wall)
@@ -30,6 +30,8 @@ require_once("config.inc");
 require_once("functions.inc");
 require_once("filter.inc");
 require_once("shaper.inc");
+require_once("interfaces.inc");
+require_once("util.inc");
 
 function create_unbound_chroot_path($cfgsubdir = "") {
 	global $config, $g;
@@ -175,6 +177,17 @@ function unbound_generate_config_text($unboundcfg = NULL, $cfgsubdir = "") {
 		$module_config .= 'python ';
 	}
 
+	// Setup DNS64 support
+	if (isset($unboundcfg['dns64'])) {
+		$module_config .= 'dns64 ';
+		$dns64_conf = 'dns64-prefix: ';
+		if (is_subnetv6($unboundcfg['dns64prefix'] . '/' . $unboundcfg['dns64netbits'])) {
+			$dns64_conf .= $unboundcfg['dns64prefix'] . '/' . $unboundcfg['dns64netbits'];
+		} else {
+			$dns64_conf .= '64:ff9b::/96';
+		}
+	}
+
 	// Setup DNSSEC support
 	if (isset($unboundcfg['dnssec'])) {
 		$module_config .= 'validator ';
@@ -246,7 +259,7 @@ EOF;
 		$tlscert_path = "{$g['unbound_chroot_path']}/sslcert.crt";
 		$tlskey_path = "{$g['unbound_chroot_path']}/sslcert.key";
 
-		// Enable SSL on the chosen or default port
+		// Enable SSL/TLS on the chosen or default port
 		$tlsconfig .= "tls-port: {$tlsport}\n";
 
 		// Lookup CA and Server Cert
@@ -315,9 +328,14 @@ EOF;
 	$prefetch = isset($unboundcfg['prefetch']) ? "yes" : "no";
 	$prefetch_key = isset($unboundcfg['prefetchkey']) ? "yes" : "no";
 	$dns_record_cache = isset($unboundcfg['dnsrecordcache']) ? "yes" : "no";
+	$aggressivensec = isset($unboundcfg['aggressivensec']) ? "yes" : "no";
 	$outgoing_num_tcp = isset($unboundcfg['outgoing_num_tcp']) ? $unboundcfg['outgoing_num_tcp'] : "10";
 	$incoming_num_tcp = isset($unboundcfg['incoming_num_tcp']) ? $unboundcfg['incoming_num_tcp'] : "10";
-	$edns_buffer_size = (!empty($unboundcfg['edns_buffer_size'])) ? $unboundcfg['edns_buffer_size'] : "4096";
+	if (empty($unboundcfg['edns_buffer_size']) || ($unboundcfg['edns_buffer_size'] == 'auto')) {
+		$edns_buffer_size = unbound_auto_ednsbufsize();
+	} else {
+		$edns_buffer_size = $unboundcfg['edns_buffer_size'];
+	}
 	$num_queries_per_thread = (!empty($unboundcfg['num_queries_per_thread'])) ? $unboundcfg['num_queries_per_thread'] : "4096";
 	$jostle_timeout = (!empty($unboundcfg['jostle_timeout'])) ? $unboundcfg['jostle_timeout'] : "200";
 	$cache_max_ttl = (!empty($unboundcfg['cache_max_ttl'])) ? $unboundcfg['cache_max_ttl'] : "86400";
@@ -477,6 +495,7 @@ prefetch: {$prefetch}
 prefetch-key: {$prefetch_key}
 use-caps-for-id: {$use_caps}
 serve-expired: {$dns_record_cache}
+aggressive-nsec: {$aggressivensec}
 # Statistics
 {$statistics}
 # TLS Configuration
@@ -487,6 +506,7 @@ serve-expired: {$dns_record_cache}
 # DNS Rebinding
 {$private_addr}
 {$private_domains}
+{$dns64_conf}
 
 # Access lists
 include: {$g['unbound_chroot_path']}{$cfgsubdir}/access_lists.conf
@@ -890,6 +910,23 @@ function unbound_acls_config($cfgsubdir = "") {
 			}
 		}
 
+		// OpenVPN IPv6 Tunnel Networks
+		foreach (array('openvpn-client', 'openvpn-server') as $ovpnentry) {
+			if (is_array($config['openvpn'][$ovpnentry])) {
+				foreach ($config['openvpn'][$ovpnentry] as $ovpnent) {
+					if (!isset($ovpnent['disable']) && !empty($ovpnent['tunnel_networkv6'])) {
+						$aclcfg .= "access-control: {$ovpnent['tunnel_networkv6']} allow\n";
+					}
+				}
+			}
+		}
+		// IPsec Mobile Virtual IPv6 Address Pool
+		if ((isset($config['ipsec']['client']['enable'])) &&
+		    (!empty($config['ipsec']['client']['pool_address_v6'])) &&
+		    (!empty($config['ipsec']['client']['pool_netbits_v6']))) {
+			$aclcfg .= "access-control: {$config['ipsec']['client']['pool_address_v6']}/{$config['ipsec']['client']['pool_netbits_v6']} allow\n";
+		}
+
 		// Generate IPv4 access-control entries using the same logic as automatic outbound NAT
 		if (empty($FilterIflist)) {
 			filter_generate_optcfg_array();
@@ -945,6 +982,40 @@ function unbound_local_zone_types() {
 		"inform_deny" => gettext("Inform Deny"),
 		"nodefault" => gettext("No Default")
 	);
+}
+
+// Autoconfig EDNS buffer size
+function unbound_auto_ednsbufsize() {
+	global $config;
+
+	$active_ipv6_inf = false;
+	if ($config['unbound']['active_interface'] != 'all') {
+		$active_interfaces = explode(",", $config['unbound']['active_interface']);
+	} else {
+		$active_interfaces = get_configured_interface_list();
+	}
+
+	$min_mtu = get_interface_mtu(get_real_interface($active_interfaces[0]));
+	foreach ($active_interfaces as $ubif) {
+		$ubif_mtu = get_interface_mtu(get_real_interface($ubif));
+		if (get_interface_ipv6($ubif)) {
+			$active_ipv6_inf = true;
+		}
+		if ($ubif_mtu < $min_mtu) {
+			$min_mtu = $ubif_mtu;
+		}
+	}
+
+	// maximum IPv4 + UDP header = 68 bytes
+	$min_mtu = $min_mtu - 68;
+
+	if (($min_mtu < 1232) && $active_ipv6_inf) {
+		$min_mtu = 1232;
+	} elseif ($min_mtu < 512) {
+		$min_mtu = 512;
+	}	
+
+	return $min_mtu;
 }
 
 ?>

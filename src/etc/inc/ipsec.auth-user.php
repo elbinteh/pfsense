@@ -7,7 +7,7 @@
  * Copyright (c) 2008 Shrew Soft Inc
  * Copyright (c) 2008-2013 BSD Perimeter
  * Copyright (c) 2013-2016 Electric Sheep Fencing
- * Copyright (c) 2014-2019 Rubicon Communications, LLC (Netgate)
+ * Copyright (c) 2014-2020 Rubicon Communications, LLC (Netgate)
  * All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -51,7 +51,7 @@ if (isset($_GET['username'])) {
 	$authmodes = explode(",", getenv("authcfg"));
 }
 
-if (!$username || !$password) {
+if (!$username) {
 	syslog(LOG_ERR, "invalid user authentication environment");
 	if (isset($_GET['username'])) {
 		echo "FAILED";

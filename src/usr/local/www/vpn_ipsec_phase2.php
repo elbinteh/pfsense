@@ -5,7 +5,7 @@
  * part of pfSense (https://www.pfsense.org)
  * Copyright (c) 2004-2013 BSD Perimeter
  * Copyright (c) 2013-2016 Electric Sheep Fencing
- * Copyright (c) 2014-2019 Rubicon Communications, LLC (Netgate)
+ * Copyright (c) 2014-2020 Rubicon Communications, LLC (Netgate)
  * Copyright (c) 2008 Shrew Soft Inc
  * All rights reserved.
  *
@@ -644,7 +644,7 @@ foreach ($p2_ealgos as $algo => $algodata) {
 		$algodata['name'],
 		(is_array($pconfig['ealgos']) && in_array($algo, $pconfig['ealgos'])),
 		$algo
-	))->addClass('multi')->setAttribute('id');
+	))->addClass('multi ealgoschk')->setAttribute('id', $algodata['name']);
 
 	if (is_array($algodata['keysel'])) {
 		$list = array();
@@ -684,14 +684,14 @@ foreach ($p2_halgos as $algo => $algoname) {
 		$algo
 	))->addClass('multi')->setAttribute('id');
 
-	$group->setHelp('Note: MD5 and SHA1 provide weak security and should be avoided.');
+	$group->setHelp('Note: Hash is ignored with GCM algorithms. MD5 and SHA1 provide weak security and should be avoided.');
 }
 
 $section->add($group);
 
 $sm = (!isset($pconfig['mobile']) || !isset($a_client['pfs_group']));
 $helpstr = $sm ? '':'Set globally in mobile client options. ';
-$helpstr .= 'Note: Groups 1, 2, 22, 23, and 24 provide weak security and should be avoided.';
+$helpstr .= 'Note: Groups 1, 2, 5, 22, 23, and 24 provide weak security and should be avoided.';
 
 $section->addInput(new Form_Select(
 	'pfsgroup',
@@ -785,11 +785,13 @@ events.push(function() {
 		} else if (value == 'vti') {
 			hideClass('opt_localid', false);
 			hideClass('opt_natid', true);
-			$('#localid_type').val('network');
+			hideClass('opt_remoteid', false);
+			$('#localid_type').val('address');
+			disableInput('localid_type', false);
 			typesel_change_local(30);
 			$('#remoteid_type').val('address');
-			disableInput('remoteid_type', true);
-			typesel_change_remote(32);
+			disableInput('remoteid_type', false);
+			typesel_change_remote(30);
 			$('#opt_localid_help').html("<?=$localid_help_vti?>");
 			$('#opt_remoteid_help').html("<?=$remoteid_help_vti?>");
 		} else {
@@ -959,7 +961,19 @@ events.push(function() {
 	<?php endif; ?>
 
 	function change_protocol() {
-			hideClass('encalg', ($('#proto').val() != 'esp'));
+		hideClass('encalg', ($('#proto').val() != 'esp'));
+	}
+
+	function change_aead() {
+		var notaead = ['AES', 'Blowfish', '3DES', 'CAST128'];
+		var arrayLength = notaead.length;
+		for (var i = 0; i < arrayLength; i++) {
+			if ($('#' + notaead[i]).prop('checked')) {
+				$("input[name='halgos[]']").prop("disabled", false);
+				return;
+			} 
+		}
+		$("input[name='halgos[]']").prop("disabled", true);
 	}
 
 	// ---------- Monitor elements for change and call the appropriate display functions ----------
@@ -967,6 +981,11 @@ events.push(function() {
 	 // Protocol
 	$('#proto').change(function () {
 		change_protocol();
+	});
+
+	// AEAD
+	$(".ealgoschk").click(function () {
+		change_aead();
 	});
 
 	 // Localid
@@ -993,6 +1012,7 @@ events.push(function() {
 
 	change_mode();
 	change_protocol();
+	change_aead();
 	typesel_change_local(<?=htmlspecialchars($pconfig['localid_netbits'])?>);
 	typesel_change_natlocal(<?=htmlspecialchars($pconfig['natlocalid_netbits'])?>);
 <?php

@@ -5,7 +5,7 @@
  * part of pfSense (https://www.pfsense.org)
  * Copyright (c) 2004-2013 BSD Perimeter
  * Copyright (c) 2013-2016 Electric Sheep Fencing
- * Copyright (c) 2014-2019 Rubicon Communications, LLC (Netgate)
+ * Copyright (c) 2014-2020 Rubicon Communications, LLC (Netgate)
  * All rights reserved.
  *
  * originally based on m0n0wall (http://m0n0.ch/wall)
@@ -120,9 +120,9 @@ $auth_server_types = array(
 	'radius' => "RADIUS");
 
 $ldap_urltypes = array(
-	'TCP - Standard' => 389,
-	'TCP - STARTTLS' => 389,
-	'SSL - Encrypted' => 636);
+	'Standard TCP' => 389,
+	'STARTTLS Encrypted' => 389,
+	'SSL/TLS Encrypted' => 636);
 
 $ldap_scopes = array(
 	'one' => gettext("One Level"),
@@ -138,19 +138,22 @@ $ldap_templates = array(
 		'desc' => "OpenLDAP",
 		'attr_user' => "cn",
 		'attr_group' => "cn",
-		'attr_member' => "member"),
+		'attr_member' => "member",
+		'allow_unauthenticated' => "true"),
 
 	'msad' => array(
 		'desc' => "Microsoft AD",
 		'attr_user' => "samAccountName",
 		'attr_group' => "cn",
-		'attr_member' => "memberOf"),
+		'attr_member' => "memberOf",
+		'allow_unauthenticated' => "false"),
 
 	'edir' => array(
 		'desc' => "Novell eDirectory",
 		'attr_user' => "cn",
 		'attr_group' => "cn",
-		'attr_member' => "uniqueMember"));
+		'attr_member' => "uniqueMember",
+		'allow_unauthenticated' => "false"));
 
 $radius_srvcs = array(
 	'both' => gettext("Authentication and Accounting"),
@@ -172,8 +175,10 @@ $netbios_nodetypes = array(
 
 /* some well known ports */
 $wkports = array(
+	179 => "BGP",
 	5999 => "CVSup",
 	53 => "DNS",
+	853 => "DNS over TLS",
 	21 => "FTP",
 	3000 => "HBCI",
 	80 => "HTTP",
@@ -186,6 +191,7 @@ $wkports = array(
 	500 => "ISAKMP",
 	1701 => "L2TP",
 	389 => "LDAP",
+	636 => "LDAP/S",
 	1755 => "MMS/TCP",
 	7000 => "MMS/UDP",
 	445 => "MS DS",
@@ -212,6 +218,7 @@ $wkports = array(
 	22 => "SSH",
 	3478 => "STUN",
 	587 => "SUBMISSION",
+	514 => "Syslog",
 	3544 => "Teredo",
 	23 => "Telnet",
 	69 => "TFTP",

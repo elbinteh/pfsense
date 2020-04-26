@@ -5,7 +5,7 @@
  * part of pfSense (https://www.pfsense.org)
  * Copyright (c) 2004-2013 BSD Perimeter
  * Copyright (c) 2013-2016 Electric Sheep Fencing
- * Copyright (c) 2014-2019 Rubicon Communications, LLC (Netgate)
+ * Copyright (c) 2014-2020 Rubicon Communications, LLC (Netgate)
  * Copyright (c) 2008 Shrew Soft Inc
  * All rights reserved.
  *
@@ -48,6 +48,7 @@ $a_client = &$config['ipsec']['client'];
 if (count($a_client)) {
 
 	$pconfig['enable'] = $a_client['enable'];
+	$pconfig['radiusaccounting'] = ($a_client['radiusaccounting'] == 'enabled');
 
 	$pconfig['user_source'] = $a_client['user_source'];
 	$pconfig['group_source'] = $a_client['group_source'];
@@ -68,18 +69,23 @@ if (count($a_client)) {
 	$pconfig['wins_server2'] = $a_client['wins_server2'];
 	$pconfig['pfs_group'] = $a_client['pfs_group'];
 	$pconfig['login_banner'] = $a_client['login_banner'];
-
+	$pconfig['radius_ip_priority_enable'] = $a_client['radius_ip_priority_enable'];
+	
 	if (isset($pconfig['enable'])) {
 		$pconfig['enable'] = true;
 	}
 
-	if ($pconfig['pool_address']&&$pconfig['pool_netbits']) {
+	if ($pconfig['pool_address'] && $pconfig['pool_netbits']) {
 		$pconfig['pool_enable'] = true;
 	} else {
 		$pconfig['pool_netbits'] = 24;
 	}
 
-	if ($pconfig['pool_address_v6']&&$pconfig['pool_netbits_v6']) {
+	if (isset($pconfig['radius_ip_priority_enable'])) {
+		$pconfig['radius_ip_priority_enable'] = true;
+	}
+
+	if ($pconfig['pool_address_v6'] && $pconfig['pool_netbits_v6']) {
 		$pconfig['pool_enable_v6'] = true;
 	} else {
 		$pconfig['pool_netbits_v6'] = 120;
@@ -101,11 +107,11 @@ if (count($a_client)) {
 		$pconfig['dns_split_enable'] = true;
 	}
 
-	if ($pconfig['dns_server1']||$pconfig['dns_server2']||$pconfig['dns_server3']||$pconfig['dns_server4']) {
+	if ($pconfig['dns_server1'] || $pconfig['dns_server2'] || $pconfig['dns_server3'] || $pconfig['dns_server4']) {
 		$pconfig['dns_server_enable'] = true;
 	}
 
-	if ($pconfig['wins_server1']||$pconfig['wins_server2']) {
+	if ($pconfig['wins_server1'] || $pconfig['wins_server2']) {
 		$pconfig['wins_server_enable'] = true;
 	}
 
@@ -125,7 +131,7 @@ if ($_REQUEST['create']) {
 if ($_POST['apply']) {
 	$retval = 0;
 	/* NOTE: #4353 Always restart ipsec when mobile clients settings change */
-	$ipsec_dynamic_hosts = vpn_ipsec_configure(true);
+	$ipsec_dynamic_hosts = ipsec_configure(true);
 	if ($ipsec_dynamic_hosts >= 0) {
 		if (is_subsystem_dirty('ipsec')) {
 			clear_subsystem_dirty('ipsec');
@@ -230,12 +236,22 @@ if ($_POST['save']) {
 		}
 	}
 
+	if ($pconfig['radius_ip_priority_enable']) {
+		if (!(isset($mobileph1) && ($mobileph1['authentication_method'] == 'eap-radius'))) {
+			$input_errors[] = gettext("RADIUS IP may only take prioriy when using EAP-RADIUS for authentication on the Mobile IPsec VPN.");
+			$pconfig['user_source'] = implode(',', $pconfig['user_source']);
+		}
+	}
+
 	if (!$input_errors) {
 		$client = array();
 
 		if ($pconfig['enable']) {
 			$client['enable'] = true;
 		}
+
+		$client['radiusaccounting'] = ($pconfig['radiusaccounting'] == 'yes') ? "enabled" : "disabled";
+
 		if (!empty($pconfig['user_source'])) {
 			$client['user_source'] = implode(",", $pconfig['user_source']);
 			$client['user_source'] = htmlentities($client['user_source'],ENT_COMPAT,'UTF-8');
@@ -246,6 +262,10 @@ if ($_POST['save']) {
 		if ($pconfig['pool_enable']) {
 			$client['pool_address'] = $pconfig['pool_address'];
 			$client['pool_netbits'] = $pconfig['pool_netbits'];
+		}
+
+		if ($pconfig['radius_ip_priority_enable']) {
+			$client['radius_ip_priority_enable'] = true;
 		}
 
 		if ($pconfig['pool_enable_v6']) {
@@ -460,6 +480,17 @@ $section->addInput(new Form_Select(
 	)
 ))->setHelp('Source');
 
+$section->addInput(new Form_Checkbox(
+	'radiusaccounting',
+	'RADIUS Accounting',
+	'Enable RADIUS Accounting',
+	$pconfig['radiusaccounting']
+))->setHelp('When enabled, the IPsec daemon will attempt to send RADIUS accounting ' .
+		'data for all tunnels, not only connections associated with mobile IPsec. ' .
+		'Do not enable this option unless the selected RADIUS servers are online and ' .
+		'capable of receiving RADIUS accounting data. If RADIUS accounting data is ' .
+		'enabled and fails to send, tunnels will be disconnected.');
+
 $form->add($section);
 
 $section = new Form_Section('Client Configuration (mode-cfg)');
@@ -534,9 +565,16 @@ $group->add(new Form_Select(
 	'',
 	$pconfig['pool_netbits_v6'],
 	$netBitsv6
-))->setWidth(3);
+))->setWidth(2);
 
 $section->add($group);
+
+$section->addInput(new Form_Checkbox(
+	'radius_ip_priority_enable',
+	'RADIUS IP address priority',
+	'IPv4/IPv6 address pool is used if address is not supplied by RADIUS server',
+	$pconfig['radius_ip_priority_enable']
+));
 
 $section->addInput(new Form_Checkbox(
 	'net_list_enable',
@@ -668,7 +706,7 @@ $group->add(new Form_Select(
 	'Group',
 	$pconfig['pfs_group'],
 	$p2_pfskeygroups
-))->setHelp('Note: Groups 1, 2, 22, 23, and 24 provide weak security and should be avoided.');
+))->setHelp('Note: Groups 1, 2, 5, 22, 23, and 24 provide weak security and should be avoided.');
 
 $section->add($group);
 

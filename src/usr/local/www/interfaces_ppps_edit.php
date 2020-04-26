@@ -5,7 +5,7 @@
  * part of pfSense (https://www.pfsense.org)
  * Copyright (c) 2004-2013 BSD Perimeter
  * Copyright (c) 2013-2016 Electric Sheep Fencing
- * Copyright (c) 2014-2019 Rubicon Communications, LLC (Netgate)
+ * Copyright (c) 2014-2020 Rubicon Communications, LLC (Netgate)
  * Copyright (c) 2010 Gabriel B. <gnoahb@gmail.com>
  * All rights reserved.
  *
@@ -586,7 +586,7 @@ if ($pconfig['type'] == 'pptp' || $pconfig['type'] == 'l2tp') {
 			'localip[' . $ifnm . ']',
 			null,
 			$pconfig['localip'][$ifnm]
-		))->addMask('subnet[' . $ifnm . ']', $pconfig['subnet'][$ifnm], 31)->setHelp('Local IP Address');
+		))->addMask('subnet[' . $ifnm . ']', $pconfig['subnet'][$ifnm], 31, 1, false)->setHelp('Local IP Address');
 
 		$group->add(new Form_Input(
 			'gateway[' . $ifnm . ']',
