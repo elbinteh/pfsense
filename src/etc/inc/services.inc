@@ -218,6 +218,7 @@ function services_radvd_configure($blacklist = array()) {
 							$radvdconf .= "\t\tAdvAutonomous off;\n";
 							$radvdconf .= "\t\tAdvRouterAddr on;\n";
 							break;
+						case "stateless_dhcp":
 						case "assist":
 							$radvdconf .= "\t\tAdvOnLink on;\n";
 							$radvdconf .= "\t\tAdvAutonomous on;\n";
